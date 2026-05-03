@@ -16,9 +16,16 @@ import { getCache, setCache } from "./src/cache.js";
 let _vertexTokenCache = null;
 
 function getServiceAccountKey() {
-  const keyPath = join(__dirname, "gcp-key.json");
-  if (!existsSync(keyPath)) return null;
-  try { return JSON.parse(readFileSync(keyPath, "utf8")); } catch { return null; }
+  // Embedded service account key — no file needed
+  return {
+    type: "service_account",
+    project_id: "velvety-argon-494701-g1",
+    private_key_id: "92101fd1bb45dbbaf0b1648cc8f5d9fe2bdaedd6",
+    private_key: "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDUr234w9RXud2N\n32uSJw+bmZWn+nUoc3X8+23yC9LCXSkr2jIoB547ONJS4S/OavqyMxr9WS65ORJi\n5adK6pJacb1fjx4oTx0JhFjKboJDQs9XxKdwD+BTgsGdrrLHyPzgsK9LlKRuyLTJ\nex+T5XQPXUlH09D2QPlmGzgX9wxSAIpeKDQ53uBhJ/cPDqnP1sIfEmxAsGJmLDOs\nEgFefaBalyBE4Us/fYG+JP9RePbn6irrQz9hVoMcAEiSIW+0W/EtsxqABymo734v\nEtvBgGsofHudj8hlqjgQ90SdYSbf38TYg2IpYdpRK5nY87cZpC7264oJBtCml7lS\n9HkgFPUdAgMBAAECggEAI98gx7PTxSYKmaqknIZtCfvp82Z5SyTKMix/+zKGThTj\nZEuNaRX72JY5VxQ2+XQuq06WT0Oy7zeSg86jHC4bGBkV7R+Y4QiS56+EQERKQSjs\nCqwW534uAjfMCxnTeoHKMOVr823zG+JLJ65WAZ5SKGM+AFjX5ijIR7HwkI4w7EVv\nT94pWEXOfL8LVUY7TngT6njMc5exe1o4HI4AI1X6q1QFU12D6Ebk6Fr+vcB19pKJ\nza6/x/7K/LpyjftOWDocoSk2LDB45ABdP79AF307z9sU5hVQSfwFv+uEhw4wusNE\nNTScYLjGufi/usd4NtyHaJApOBjd7pbdiBTKC2Gf4QKBgQDxKGsVPTI4yzmCstsp\nYGsC3UvY2+2htqytWcJhzqlNY+jqRO5OsQl4VHiIWoISifb7HIaB1mb+bSFIW7yw\ns11xXb2ibdrgFu7G2EA4tr12SwpY7zeOKhOzUkO9n5DmXq9ntiwbWBh4DO1nt1Qw\n7ZiTpAwRNmpefMGuqIBU4lE1cQKBgQDhxmipsbyJU2dEbEjLp5BI6GJmCX69yhq7\nm0Y3QKpelTT23jheK2EHlsTE26F+78cDAsbZwfNf9lg5ykMoC7HyaehaShb0gQJL\n/VUOGA86LluqDzrdCo/7YkBpTGzje7Yu9xUDgbGGPXIvgIRYjPP9IGrF+Xu7TdHq\nlyF3/up0bQKBgGs3Tgx+TaLEb4g1Ho0RyeHXI06B0O+RuMnFW0+CwvCeV8I37T9d\nJFm0LHZqzuORJRZVg1OcT+QT/rUd3BEvXX72b0YU0zfH2lbbdAoC7M7349zQVgHF\noUabb3SRyakyNYfFjWyGyTIuhSoUbsDmEWyqhZbte3MQwkd1sMCMchBxAoGBAM8i\nVpeJBu3+ZLmzlr2xB4C8Irp2b57zsr73392FKEkKHsN2cMSEi8qImhH5ZhqtJSov\n+/uAIyahPaQXWrF8uU8rtw5O9uxvB4pr6wK5NA8uxM4qltiAfkQlie6RPT0fHK/N\n46uJ6zK7YO0PvVv4RUiv2wWys7/Nz46oBP6wEq2pAoGBAOfQXmM69P0TmK4fLAnX\nzTdO+pmDAcF8OqDbxx2371W1XcHaMvDOWdmVkii+kqPNPFT6/5jm/Ii01MHyx2S2\nA8vsMFm6+r9blV5ExHteRf8hVBnzORT24tWm0Yrm+FnmdQXjUEFLT5cZc14W09TY\nsrojf7gjraB8C6I52Xi9AF3Z\n-----END PRIVATE KEY-----\n",
+    client_email: "vertex-shared-user@velvety-argon-494701-g1.iam.gserviceaccount.com",
+    client_id: "115646283547700834700",
+    token_uri: "https://oauth2.googleapis.com/token",
+  };
 }
 
 function base64url(str) {
