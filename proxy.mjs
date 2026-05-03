@@ -375,7 +375,7 @@ const server = http.createServer(async (req, res) => {
     }
     const project = "velvety-argon-494701-g1";
     const region  = "us-central1";
-    const models = ["gemini-2.0-flash","gemini-2.0-flash-001","gemini-1.5-flash","gemini-1.5-flash-001","gemini-1.0-pro"];
+    const models = ["gemini-2.5-flash","gemini-2.0-flash","gemini-2.0-flash-001","gemini-1.5-flash","gemini-1.5-flash-001","gemini-1.0-pro"];
     const tryModel = (model) => new Promise((resolve) => {
       const url2 = `https://${region}-aiplatform.googleapis.com/v1/projects/${project}/locations/${region}/publishers/google/models/${model}:generateContent`;
       const body = JSON.stringify({ contents: [{ role: "user", parts: [{ text: "Say ok" }] }], generationConfig: { maxOutputTokens: 10 } });

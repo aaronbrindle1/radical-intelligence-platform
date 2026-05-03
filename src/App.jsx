@@ -685,7 +685,7 @@ function getLLMConfig() {
   const vertexRegion  = env("VITE_VERTEX_REGION") || ls("radical_vertex_region") || "us-central1";
   const vertexEnabled = env("VITE_VERTEX_ENABLED") || ls("radical_vertex_enabled") || "true";
   if (vertexEnabled === "true") {
-    return { provider: "vertex", project: vertexProject, region: vertexRegion, model: "gemini-2.0-flash" };
+    return { provider: "vertex", project: vertexProject, region: vertexRegion, model: "gemini-2.5-flash" };
   }
 
   // Gemini — public API
@@ -734,7 +734,11 @@ async function callLLM(userPrompt, systemPrompt="You are a VC portfolio intellig
     if (cfg.provider === "vertex") {
       const payload = {
         contents: [{ role: "user", parts: [{ text: `System Instructions: ${systemPrompt}\n\nUser Request: ${userPrompt}` }] }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 1024 },
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 1024,
+          thinkingConfig: { thinkingBudget: 0 },
+        },
       };
       const endpoint = `http://localhost:3001/vertex/v1/projects/${cfg.project}/locations/${cfg.region}/publishers/google/models/${cfg.model}:generateContent`;
       res = await fetch(endpoint, {
@@ -766,8 +770,8 @@ async function callLLM(userPrompt, systemPrompt="You are a VC portfolio intellig
           temperature: 0.1
         }
       };
-      // Use v1 with gemini-2.0-flash for stable, fast performance
-      res = await fetch(`http://localhost:3001/gemini/v1/models/gemini-2.0-flash:generateContent?key=${cfg.key}`, {
+      // Use v1 with gemini-2.5-flash for stable, fast performance
+      res = await fetch(`http://localhost:3001/gemini/v1/models/gemini-2.5-flash:generateContent?key=${cfg.key}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -1125,7 +1129,7 @@ function ApiKeysPanel({ keys, onUpdate }) {
       if (!val) throw new Error("Key is empty");
 
       if (id === "gemini") {
-        const res = await fetch(`http://localhost:3001/gemini/v1/models/gemini-2.0-flash:generateContent?key=${val}`, {
+        const res = await fetch(`http://localhost:3001/gemini/v1/models/gemini-2.5-flash:generateContent?key=${val}`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ contents: [{ parts: [{ text: "Respond with 'ok'" }] }] })
         });
