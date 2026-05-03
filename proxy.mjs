@@ -370,28 +370,25 @@ const server = http.createServer(async (req, res) => {
     const token = await getVertexToken();
     if (!token) {
       res.writeHead(500, { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Could not obtain token — check gcp-key.json exists in project root" }));
+      res.end(JSON.stringify({ error: "Could not obtain token" }));
       return;
     }
     const project = "velvety-argon-494701-g1";
     const region  = "us-central1";
-    const model   = "gemini-2.0-flash";
-    const testUrl = `https://${region}-aiplatform.googleapis.com/v1/projects/${project}/locations/${region}/publishers/google/models/${model}:generateContent`;
-    const body = JSON.stringify({ contents: [{ role: "user", parts: [{ text: "Say ok" }] }], generationConfig: { maxOutputTokens: 10 } });
-    const testReq = https.request(testUrl, {
-      method: "POST",
-      headers: { "Authorization": token, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) }
-    }, testRes => {
-      let d = "";
-      testRes.on("data", c => d += c);
-      testRes.on("end", () => {
-        res.writeHead(testRes.statusCode, { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: testRes.statusCode, url: testUrl, tokenPrefix: token.slice(0, 20), response: d }));
+    const models = ["gemini-2.0-flash","gemini-2.0-flash-001","gemini-1.5-flash","gemini-1.5-flash-001","gemini-1.0-pro"];
+    const tryModel = (model) => new Promise((resolve) => {
+      const url2 = `https://${region}-aiplatform.googleapis.com/v1/projects/${project}/locations/${region}/publishers/google/models/${model}:generateContent`;
+      const body = JSON.stringify({ contents: [{ role: "user", parts: [{ text: "Say ok" }] }], generationConfig: { maxOutputTokens: 10 } });
+      const r = https.request(url2, { method: "POST", headers: { "Authorization": token, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } }, resp => {
+        let d = ""; resp.on("data", c => d += c); resp.on("end", () => resolve({ model, status: resp.statusCode, ok: resp.statusCode === 200 }));
       });
+      r.on("error", e => resolve({ model, status: "error", ok: false }));
+      r.write(body); r.end();
     });
-    testReq.on("error", e => { res.writeHead(500, { "Access-Control-Allow-Origin": "*" }); res.end(JSON.stringify({ error: e.message })); });
-    testReq.write(body);
-    testReq.end();
+    Promise.all(models.map(tryModel)).then(results => {
+      res.writeHead(200, { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" });
+      res.end(JSON.stringify({ tokenPrefix: token.slice(0,20), results }, null, 2));
+    });
     return;
   }
 
