@@ -1,6 +1,6 @@
 // ─── Radical Intelligence — Local API Proxy ───────────────────────────────────
 // Port 3001. Forwards API calls from the browser to avoid CORS restrictions.
-// Routes: /newsapi/* /yutori/* /cohere/* /anthropic/*
+// Routes: /newsapi/* /yutori/* /cohere/* /anthropic/* /vertex/*
 // Start: node proxy.mjs  (launched automatically by START-MAC.command)
 
 import http from "http";
@@ -11,6 +11,80 @@ import { fileURLToPath } from "url";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import { getCache, setCache } from "./src/cache.js";
+
+// ── Service Account JWT Token Cache ──────────────────────────────────────────
+let _vertexTokenCache = null;
+
+function getServiceAccountKey() {
+  const keyPath = join(__dirname, "gcp-key.json");
+  if (!existsSync(keyPath)) return null;
+  try { return JSON.parse(readFileSync(keyPath, "utf8")); } catch { return null; }
+}
+
+function base64url(str) {
+  return Buffer.from(str).toString("base64")
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+async function getVertexToken() {
+  // Return cached token if still valid (refresh 5 min before expiry)
+  if (_vertexTokenCache && _vertexTokenCache.expiresAt > Date.now() + 300_000) {
+    return _vertexTokenCache.token;
+  }
+
+  const key = getServiceAccountKey();
+  if (!key) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  const header  = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const payload = base64url(JSON.stringify({
+    iss: key.client_email,
+    scope: "https://www.googleapis.com/auth/cloud-platform",
+    aud: key.token_uri,
+    exp: now + 3600,
+    iat: now,
+  }));
+
+  const sign = crypto.createSign("RSA-SHA256");
+  sign.update(header + "." + payload);
+  const sig = sign.sign(key.private_key, "base64")
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+  const jwt = header + "." + payload + "." + sig;
+
+  // Exchange JWT for access token
+  const body = `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`;
+  
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: "oauth2.googleapis.com",
+      path: "/token",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": Buffer.byteLength(body),
+      },
+    }, res => {
+      let d = "";
+      res.on("data", c => d += c);
+      res.on("end", () => {
+        try {
+          const r = JSON.parse(d);
+          if (r.access_token) {
+            _vertexTokenCache = { token: "Bearer " + r.access_token, expiresAt: Date.now() + (r.expires_in * 1000) };
+            console.log("[vertex] ✅ Service account token obtained, expires in", r.expires_in, "s");
+            resolve(_vertexTokenCache.token);
+          } else {
+            console.warn("[vertex] ❌ Token exchange failed:", JSON.stringify(r));
+            resolve(null);
+          }
+        } catch(e) { console.warn("[vertex] Token parse error:", e.message); resolve(null); }
+      });
+    });
+    req.on("error", e => { console.warn("[vertex] Token request error:", e.message); resolve(null); });
+    req.write(body);
+    req.end();
+  });
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = 3001;
@@ -222,33 +296,37 @@ const server = http.createServer((req, res) => {
   // ── Vertex AI ────────────────────────────────────────────────────────────
   if (url.startsWith("/vertex/")) {
     const path = url.replace("/vertex/", "");
-    
-    // Parse region from path if possible, default to us-central1
-    // Path looks like: v1/projects/PROJECT/locations/REGION/...
     const regionMatch = path.match(/locations\/([a-z0-9-]+)/);
     const region = regionMatch ? regionMatch[1] : "us-central1";
-    
-    // Try to get token from Authorization header first
-    let token = req.headers["authorization"];
-    if (!token) {
-      // Fallback: try gcloud
-      try {
-        token = "Bearer " + execSync("gcloud auth print-access-token").toString().trim();
-        console.log("[proxy] Successfully retrieved Vertex AI token via gcloud");
-      } catch (e) {
-        console.warn("[proxy] Failed to get Vertex AI token via gcloud (is it installed and logged in?):", e.message);
-      }
-    }
-    
-    if (!token) {
-      res.writeHead(401, { "Access-Control-Allow-Origin": ALLOWED_ORIGIN, "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "No Vertex AI token found. Run 'gcloud auth login' and 'gcloud auth application-default login' first." }));
-      return;
-    }
 
-    const targetUrl = `https://${region}-aiplatform.googleapis.com/${path}`;
-    proxyRequest(req, res, targetUrl, {
-      "Authorization": token
+    // Buffer request body before async token fetch
+    const chunks = [];
+    req.on("data", c => chunks.push(c));
+    req.on("end", async () => {
+      const body = Buffer.concat(chunks);
+
+      // Get token: header → service account key file → gcloud fallback
+      let token = req.headers["authorization"];
+      if (!token) {
+        token = await getVertexToken();
+      }
+      if (!token) {
+        try {
+          token = "Bearer " + execSync("gcloud auth print-access-token").toString().trim();
+          console.log("[vertex] Token via gcloud fallback");
+        } catch(e) {
+          console.warn("[vertex] gcloud fallback failed:", e.message);
+        }
+      }
+      if (!token) {
+        res.writeHead(401, { "Access-Control-Allow-Origin": ALLOWED_ORIGIN, "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "No Vertex AI credentials found. Add gcp-key.json to project root." }));
+        return;
+      }
+
+      const targetUrl = `https://${region}-aiplatform.googleapis.com/${path}`;
+      console.log("[vertex] →", targetUrl);
+      proxyRequest(req, res, targetUrl, { "Authorization": token }, body);
     });
     return;
   }

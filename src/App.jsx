@@ -679,6 +679,15 @@ function getLLMConfig() {
   const ls = k => { try { return localStorage.getItem(k) || ""; } catch { return ""; } };
   const env = k => (typeof import.meta !== "undefined" && import.meta.env?.[k]) || "";
 
+  // Vertex AI — service account key file (gcp-key.json) handled by proxy
+  // Project + region baked in from the service account key
+  const vertexProject = env("VITE_GCP_PROJECT") || ls("radical_vertex_project") || "velvety-argon-494701-g1";
+  const vertexRegion  = env("VITE_VERTEX_REGION") || ls("radical_vertex_region") || "us-central1";
+  const vertexEnabled = env("VITE_VERTEX_ENABLED") || ls("radical_vertex_enabled") || "true";
+  if (vertexEnabled === "true") {
+    return { provider: "vertex", project: vertexProject, region: vertexRegion, model: "gemini-2.0-flash-001" };
+  }
+
   // Gemini — public API
   const geminiKey = env("VITE_GEMINI_API_KEY") || ls("radical_apikey_gemini");
 
@@ -695,8 +704,7 @@ function getLLMConfig() {
   // Anthropic — fallback public API
   const anthropicKey  = env("VITE_ANTHROPIC_API_KEY")      || ls("radical_anthropic_key");
 
-  // Default hierarchy if multiple are defined: Gemini > Cohere Public > Cohere North > Anthropic
-  // (We use Gemini first if provided, else Cohere Public, etc.)
+  // Hierarchy: Vertex > Gemini > Cohere Public > Cohere North > Anthropic
   if (geminiKey) return { provider: "gemini", key: geminiKey };
   if (coherePublicKey) return { provider: "cohere-public", key: coherePublicKey };
   if (northKey) return { provider: "cohere-north", key: northKey, hostname: northHostname, model: northModel };
@@ -721,6 +729,29 @@ async function callLLM(userPrompt, systemPrompt="You are a VC portfolio intellig
 
   try {
     let res;
+
+    // ── Vertex AI (service account — no API key needed) ───────────────────
+    if (cfg.provider === "vertex") {
+      const payload = {
+        contents: [{ role: "user", parts: [{ text: `System Instructions: ${systemPrompt}\n\nUser Request: ${userPrompt}` }] }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 1024 },
+      };
+      const endpoint = `http://localhost:3001/vertex/v1/projects/${cfg.project}/locations/${cfg.region}/publishers/google/models/${cfg.model}:generateContent`;
+      res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        console.error("[Vertex Error]:", JSON.stringify(err));
+        return { _error: true, status: res.status, message: err.error?.message || "Vertex error" };
+      }
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      try { return JSON.parse(text.replace(/```json|```/g, "").trim()); }
+      catch { return { _raw: text }; }
+    }
 
     // ── Gemini ────────────────────────────────────────────────────────────
     if (cfg.provider === "gemini") {

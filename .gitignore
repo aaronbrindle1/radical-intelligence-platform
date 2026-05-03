@@ -1,6 +1,19 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Local env and secrets — NEVER commit these
 .env
 .env.local
+gcp-key.json
+*.key.json
+*-key.json
+
+# Cache
+api_cache.sqlite
+*.sqlite
+
+# OS
 .DS_Store
-*.local
