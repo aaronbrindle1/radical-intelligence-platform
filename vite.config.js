@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { spawn } from 'child_process'
+import { spawn, execSync } from 'child_process'
 
 // Auto-start the proxy server alongside Vite — no second terminal needed
 function proxyPlugin() {
@@ -9,7 +9,14 @@ function proxyPlugin() {
     name: 'auto-proxy',
     configureServer() {
       if (proxyProcess) return
-      console.log('\n[vite] Starting API proxy on port 3001...')
+
+      // Kill any existing process on port 3001 before starting
+      try {
+        execSync("lsof -ti:3001 | xargs kill -9", { stdio: 'ignore' })
+        console.log('\n[vite] Cleared port 3001')
+      } catch (_) {}
+
+      console.log('[vite] Starting API proxy on port 3001...')
       proxyProcess = spawn('node', ['proxy.mjs'], {
         stdio: 'inherit',
         shell: true,
