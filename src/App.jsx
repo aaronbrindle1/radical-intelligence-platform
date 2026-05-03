@@ -3401,7 +3401,9 @@ async function runSearchForCompany(company, dateRangeId, onProgress, approvedOut
       // but keep the local filtering logic below for highlighting Tier 1/2 sources.
       // const domainFilter = domains.length > 0 ? `&domains=${domains.slice(0, 100).join(",")}` : "";
       
-      const buildUrl = (page, sortBy="relevancy") => `http://localhost:3001/newsapi/v2/everything?q=${encodeURIComponent(query)}&from=${fromDate}&sortBy=${sortBy}&pageSize=100&page=${page}&language=en&apiKey=${newsKey}`;
+      // Use full boolean query first; fall back to simple name search if it returns 0 results
+      const simpleQuery = `"${company.name}"`;
+      const buildUrl = (page, sortBy="relevancy", q=query) => `http://localhost:3001/newsapi/v2/everything?q=${encodeURIComponent(q)}&from=${fromDate}&sortBy=${sortBy}&pageSize=100&page=${page}&language=en&apiKey=${newsKey}`;
       prog("Fetching up to 200 articles across multiple queries…");
       const [res1, res2, res3] = await Promise.allSettled([
         fetch(buildUrl(1, "relevancy")),
@@ -3416,7 +3418,21 @@ async function runSearchForCompany(company, dateRangeId, onProgress, approvedOut
       const [arts1, arts2, arts3] = await Promise.all([parseRes(res1), parseRes(res2), parseRes(res3)]);
       const seenUrls = new Set();
       const allRawArticles = [...arts1, ...arts2, ...arts3].filter(a => { if (!a.url || seenUrls.has(a.url)) return false; seenUrls.add(a.url); return true; });
-      const data = { status: "ok", articles: allRawArticles, totalResults: allRawArticles.length };
+      let allRawArticlesFinal = allRawArticles;
+      // If boolean query returned 0 results, retry with simple quoted name
+      if (allRawArticles.length === 0 && query !== simpleQuery) {
+        console.log("[NewsAPI] Boolean query returned 0 results — retrying with simple name query:", simpleQuery);
+        prog("Retrying with simplified search query…");
+        const [rr1, rr2] = await Promise.allSettled([
+          fetch(buildUrl(1, "relevancy", simpleQuery)),
+          fetch(buildUrl(1, "publishedAt", simpleQuery)),
+        ]);
+        const [ra1, ra2] = await Promise.all([parseRes(rr1), parseRes(rr2)]);
+        const seenUrls2 = new Set();
+        allRawArticlesFinal = [...ra1, ...ra2].filter(a => { if (!a.url || seenUrls2.has(a.url)) return false; seenUrls2.add(a.url); return true; });
+        console.log("[NewsAPI] Simple query returned:", allRawArticlesFinal.length, "articles");
+      }
+      const data = { status: "ok", articles: allRawArticlesFinal, totalResults: allRawArticlesFinal.length };
       if (data.status === "ok" && Array.isArray(data.articles)) {
         console.log("[NewsAPI] Total deduped articles:", data.articles.length, "| Sources:", data.articles.map(a => a.source?.name).join(", "));
 
@@ -3630,7 +3646,7 @@ async function runSearchForCompany(company, dateRangeId, onProgress, approvedOut
   let extractedSignals = [];
   let keyDrivers = [];
   
-  if (allText) {
+  if (allText && getLLMConfig()) {
     prog("Scoring sentiment and extracting signals…");
     try {
       const s = await callLLM(
@@ -3692,13 +3708,12 @@ function RunPanel({ company, onRunComplete, isCompact=false, outlets=[] }) {
   const run = async () => {
     setRunning(true);
     setProgress("Starting…");
-    // Quick proxy health check before running
+    // Quick proxy health check — warn but don't block the run
     try {
       await fetch("http://localhost:3001/health");
     } catch {
-      setProgress("⚠ Proxy not running — restart via START-MAC.command");
-      setRunning(false);
-      return;
+      setProgress("⚠ Proxy not running — news search will fail. Restart via START-MAC.command");
+      await new Promise(r => setTimeout(r, 1500));
     }
     try {
       const result = await runSearchForCompany(company, dateRange, msg => setProgress(msg), outlets);
