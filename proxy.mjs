@@ -358,6 +358,36 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ── Vertex diagnostics — GET /vertex-test ────────────────────────────────
+  if (url === "/vertex-test") {
+    const token = await getVertexToken();
+    if (!token) {
+      res.writeHead(500, { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Could not obtain token — check gcp-key.json exists in project root" }));
+      return;
+    }
+    const project = "velvety-argon-494701-g1";
+    const region  = "us-central1";
+    const model   = "gemini-1.5-flash";
+    const testUrl = `https://${region}-aiplatform.googleapis.com/v1/projects/${project}/locations/${region}/publishers/google/models/${model}:generateContent`;
+    const body = JSON.stringify({ contents: [{ role: "user", parts: [{ text: "Say ok" }] }], generationConfig: { maxOutputTokens: 10 } });
+    const testReq = https.request(testUrl, {
+      method: "POST",
+      headers: { "Authorization": token, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) }
+    }, testRes => {
+      let d = "";
+      testRes.on("data", c => d += c);
+      testRes.on("end", () => {
+        res.writeHead(testRes.statusCode, { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: testRes.statusCode, url: testUrl, tokenPrefix: token.slice(0, 20), response: d }));
+      });
+    });
+    testReq.on("error", e => { res.writeHead(500, { "Access-Control-Allow-Origin": "*" }); res.end(JSON.stringify({ error: e.message })); });
+    testReq.write(body);
+    testReq.end();
+    return;
+  }
+
   res.writeHead(404, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: "Unknown proxy path: " + url }));
 });
