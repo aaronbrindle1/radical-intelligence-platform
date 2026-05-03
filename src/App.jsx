@@ -3401,17 +3401,24 @@ async function runSearchForCompany(company, dateRangeId, onProgress, approvedOut
       // but keep the local filtering logic below for highlighting Tier 1/2 sources.
       // const domainFilter = domains.length > 0 ? `&domains=${domains.slice(0, 100).join(",")}` : "";
       
-      const url = `http://localhost:3001/newsapi/v2/everything?q=${encodeURIComponent(query)}&from=${fromDate}&sortBy=relevancy&pageSize=100&language=en&apiKey=${newsKey}`;
-      console.log("[NewsAPI] Fetching:", url.replace(newsKey, "REDACTED"));
-      const res  = await fetch(url);
-      const text = await res.text();
-      let data;
-      try { data = JSON.parse(text); }
-      catch(e) { console.warn("[NewsAPI] Non-JSON response — likely CORS block on free plan. Works on localhost."); data = {}; }
+      const buildUrl = (page, sortBy="relevancy") => `http://localhost:3001/newsapi/v2/everything?q=${encodeURIComponent(query)}&from=${fromDate}&sortBy=${sortBy}&pageSize=100&page=${page}&language=en&apiKey=${newsKey}`;
+      prog("Fetching up to 200 articles across multiple queries…");
+      const [res1, res2, res3] = await Promise.allSettled([
+        fetch(buildUrl(1, "relevancy")),
+        fetch(buildUrl(2, "relevancy")),
+        fetch(buildUrl(1, "publishedAt")),
+      ]);
+      const parseRes = async (settled) => {
+        if (settled.status !== "fulfilled") return [];
+        try { const t = await settled.value.text(); const d = JSON.parse(t); return (d.status === "ok" && Array.isArray(d.articles)) ? d.articles : []; }
+        catch { return []; }
+      };
+      const [arts1, arts2, arts3] = await Promise.all([parseRes(res1), parseRes(res2), parseRes(res3)]);
+      const seenUrls = new Set();
+      const allRawArticles = [...arts1, ...arts2, ...arts3].filter(a => { if (!a.url || seenUrls.has(a.url)) return false; seenUrls.add(a.url); return true; });
+      const data = { status: "ok", articles: allRawArticles, totalResults: allRawArticles.length };
       if (data.status === "ok" && Array.isArray(data.articles)) {
-        // Log raw results before filtering so we can debug
-        console.log("[NewsAPI] Total results:", data.totalResults, "| Raw articles fetched:", data.articles.length,
-          "| Sources:", data.articles.map(a => a.source?.name).join(", "));
+        console.log("[NewsAPI] Total deduped articles:", data.articles.length, "| Sources:", data.articles.map(a => a.source?.name).join(", "));
 
         // Build outlet matching index — name + domain keywords
         const outletNames = approvedOutlets
@@ -3499,7 +3506,7 @@ async function runSearchForCompany(company, dateRangeId, onProgress, approvedOut
         };
 
         mediaResults = finalArticles
-          .slice(0, 10)
+          .slice(0, 100)
           .map((a, i) => ({
             id: `nm-${company.id}-${Date.now()}-${i}`,
             source:  a.source?.name || "Unknown",
