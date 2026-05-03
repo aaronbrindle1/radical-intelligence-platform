@@ -210,7 +210,7 @@ function proxyRequest(req, res, targetUrl, extraHeaders = {}, body = null, redir
   }
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
 
   // CORS preflight
   if (req.method === "OPTIONS") {

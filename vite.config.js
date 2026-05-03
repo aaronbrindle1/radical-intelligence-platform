@@ -10,28 +10,19 @@ function proxyPlugin() {
     configureServer() {
       if (proxyProcess) return
 
-      // Kill any existing process on port 3001 before starting
-      try {
-        execSync("lsof -ti:3001 | xargs kill -9", { stdio: 'ignore' })
-        console.log('\n[vite] Cleared port 3001')
-      } catch (_) {}
+      // Kill any existing process on port 3001
+      try { execSync('lsof -ti:3001 | xargs kill -9', { stdio: 'ignore' }) } catch (_) {}
 
       console.log('[vite] Starting API proxy on port 3001...')
-      proxyProcess = spawn('node', ['proxy.mjs'], {
-        stdio: 'inherit',
-        shell: true,
-      })
+      proxyProcess = spawn('node', ['proxy.mjs'], { stdio: 'inherit' })
       proxyProcess.on('error', (e) => console.error('[proxy] Failed to start:', e.message))
-      process.on('exit', () => proxyProcess?.kill())
-      process.on('SIGINT', () => { proxyProcess?.kill(); process.exit() })
+      process.on('exit', () => { try { proxyProcess.kill() } catch(_) {} })
+      process.on('SIGINT', () => { try { proxyProcess.kill() } catch(_) {} process.exit() })
     }
   }
 }
 
 export default defineConfig({
   plugins: [react(), proxyPlugin()],
-  server: {
-    port: 3000,
-    open: true,
-  },
+  server: { port: 3000, open: true },
 })
