@@ -1082,6 +1082,7 @@ function ApiKeysPanel({ keys, onUpdate }) {
     return initial;
   });
   const [show, setShow] = useState({});
+  const [saved, setSaved] = useState({});
   const [testing, setTesting] = useState({});
   const [testResult, setTestResult] = useState({});
 
@@ -1139,6 +1140,8 @@ function ApiKeysPanel({ keys, onUpdate }) {
     setSaved(s=>({...s,[id]:true}));
     setTimeout(()=>setSaved(s=>({...s,[id]:false})),2000);
   };
+
+  const cats = [...new Set(keys.map(k => k.category).filter(Boolean))];
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:20}}>
