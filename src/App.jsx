@@ -3670,8 +3670,8 @@ async function runSearchForCompany(company, dateRangeId, onProgress, approvedOut
 
   const result = {
     ranAt: new Date().toISOString(), dateRangeId, fromDate, query,
-    mediaResults: mediaResults.slice(0, 8).map(m => ({...m, snippet:(m.snippet||"").slice(0,300)})),
-    socialResults: socialResults.slice(0, 8).map(s => ({...s, text:(s.text||"").slice(0,400)})),
+    mediaResults: mediaResults.slice(0, 100).map(m => ({...m, snippet:(m.snippet||"").slice(0,300)})),
+    socialResults: socialResults.slice(0, 100).map(s => ({...s, text:(s.text||"").slice(0,400)})),
     sentimentScore, mediaCount: mediaResults.length, socialCount: socialResults.length,
     isLive: hasLiveData, provider: yutoriKey?"yutori":data365Key?"data365":"sample", yutoriMode,
     business_signals: extractedSignals, key_drivers: keyDrivers
@@ -4067,16 +4067,15 @@ export default function App() {
       console.warn("handleRunComplete: invalid result for company", companyId, runResult);
       return;
     }
-    // Trim results before persisting — keep max 20 items, only display fields
-    // This prevents hitting localStorage's ~5MB limit with large API responses
+    // Trim results before persisting — keep max 100 items, only display fields
     const trimmedRun = {
       ...runResult,
-      mediaResults: (runResult.mediaResults || []).slice(0, 20).map(m => ({
+      mediaResults: (runResult.mediaResults || []).slice(0, 100).map(m => ({
         id:m.id, source:m.source, tier:m.tier, title:m.title,
-        snippet:m.snippet?.slice(0, 180), url:m.url, date:m.date,
+        snippet:m.snippet?.slice(0, 300), url:m.url, date:m.date,
         sentiment:m.sentiment, topic:m.topic, isLive:m.isLive,
       })),
-      socialResults: (runResult.socialResults || []).slice(0, 20).map(s => ({
+      socialResults: (runResult.socialResults || []).slice(0, 100).map(s => ({
         id:s.id, platform:s.platform, subreddit:s.subreddit, author:s.author,
         text:s.text?.slice(0, 240), likes:s.likes, comments:s.comments,
         sentiment:s.sentiment, date:s.date, isLive:s.isLive,
