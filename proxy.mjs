@@ -325,7 +325,8 @@ const server = http.createServer((req, res) => {
       }
 
       const targetUrl = `https://${region}-aiplatform.googleapis.com/${path}`;
-      console.log("[vertex] →", targetUrl);
+      console.log("[vertex] → POST", targetUrl);
+      console.log("[vertex] Token prefix:", token?.slice(0, 20) + "...");
       proxyRequest(req, res, targetUrl, { "Authorization": token }, body);
     });
     return;

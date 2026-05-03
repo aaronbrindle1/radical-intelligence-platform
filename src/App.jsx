@@ -685,7 +685,7 @@ function getLLMConfig() {
   const vertexRegion  = env("VITE_VERTEX_REGION") || ls("radical_vertex_region") || "us-central1";
   const vertexEnabled = env("VITE_VERTEX_ENABLED") || ls("radical_vertex_enabled") || "true";
   if (vertexEnabled === "true") {
-    return { provider: "vertex", project: vertexProject, region: vertexRegion, model: "gemini-2.0-flash-001" };
+    return { provider: "vertex", project: vertexProject, region: vertexRegion, model: "gemini-1.5-flash" };
   }
 
   // Gemini — public API
