@@ -41,7 +41,7 @@ export const BOOLEAN_QUERIES = {
   "Artificial Agency":   `"Artificial Agency" AND ("AI" OR "gaming" OR "NPC" OR "characters")`,
   "Vizcom":              `"Vizcom" AND ("AI" OR "design" OR "render" OR "sketch")`,
   "Yutori":              `"Yutori" AND ("AI" OR "search" OR "research" OR "agent") NOT "fashion" NOT "clothing"`,
-  "Firsthand":           `"Firsthand" AND ("AI" OR "agent" OR "commerce" OR "consumer") NOT "experience" NOT "account"`,
+  "Firsthand":           `"Firsthand" AND "rubenstein" AND ("AI" OR "agent" OR "brand" OR "advertising") NOT "experience" NOT "account"`,
   "Spara":               `"Spara" AND ("AI" OR "sales" OR "revenue" OR "pipeline") NOT "spare"`,
   "Emerald AI":          `("Emerald AI") OR ("Emerald" AND ("workflow automation" OR "business systems" OR "enterprise AI")) NOT "Emerald Isle" NOT "Emerald City" NOT "Emerald Group"`,
   "Mosaic":              `"Mosaic" AND ("AI" OR "finance" OR "FP&A" OR "planning") NOT "tile" NOT "theory" NOT "law"`,
