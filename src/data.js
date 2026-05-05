@@ -141,6 +141,7 @@ export function buildInitialCompanies() {
     year: c.year,
     description: c.description,
     website: c.website,
+    ...(c.isFirm ? { isFirm: true } : {}),
     enabled: true,
     boolean_query: BOOLEAN_QUERIES[c.name] || `"${c.name}"`,
     boolean_approved: Boolean(BOOLEAN_QUERIES[c.name]),
