@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { buildInitialCompanies, DEFAULT_OUTLETS, DATE_RANGES, BOOLEAN_QUERIES } from "./data.js";
-import { runCompany, runSOV, generateBriefing, quickSentiment, callLLM, parseJSON } from "./api.js";
+import { runCompany, runSOV, generateBriefing, quickSentiment, callLLM, parseJSON, detectThemes, bustCompanyCache } from "./api.js";
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 
@@ -9,7 +9,17 @@ const STORAGE_KEY = "radical_v5";
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const saved = JSON.parse(raw);
+      // Merge any new companies from RAW_PORTFOLIO that aren't in saved state
+      const canonical = buildInitialCompanies();
+      const savedIds = new Set(saved.companies.map(c => c.id));
+      const newEntries = canonical.filter(c => !savedIds.has(c.id));
+      if (newEntries.length > 0) {
+        saved.companies = [...saved.companies, ...newEntries];
+      }
+      return saved;
+    }
   } catch {}
   // Migrate from old keys
   try {
@@ -153,18 +163,20 @@ const Spinner = () => (
 
 function ArticleCard({ item }) {
   return (
-    <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"12px 14px", display:"flex", flexDirection:"column", gap:6 }}>
-      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-        <span style={{ fontSize:10, fontWeight:700, color:tc(item.tier), background:`${tc(item.tier)}18`, padding:"2px 6px", borderRadius:4, border:`1px solid ${tc(item.tier)}35` }}>T{item.tier}</span>
-        <span style={{ fontSize:11, fontWeight:600, color:T.dim }}>{item.source}</span>
-        <span style={{ fontSize:10, color:T.faint, marginLeft:"auto" }}>{item.date}</span>
-        <Pip score={item.sentiment || 0} />
+    <a href={item.url || "#"} target="_blank" rel="noopener noreferrer" style={{ textDecoration:"none", display:"block" }}
+      onMouseEnter={e => e.currentTarget.firstChild.style.borderColor = T.accent + "80"}
+      onMouseLeave={e => e.currentTarget.firstChild.style.borderColor = T.border}>
+      <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"12px 14px", display:"flex", flexDirection:"column", gap:6, transition:"border-color 0.15s", cursor:"pointer" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+          <span style={{ fontSize:10, fontWeight:700, color:tc(item.tier), background:`${tc(item.tier)}18`, padding:"2px 6px", borderRadius:4, border:`1px solid ${tc(item.tier)}35` }}>T{item.tier}</span>
+          <span style={{ fontSize:11, fontWeight:600, color:T.dim }}>{item.source}</span>
+          <span style={{ fontSize:10, color:T.faint, marginLeft:"auto" }}>{item.date}</span>
+          <Pip score={item.sentiment || 0} />
+        </div>
+        <div style={{ fontSize:13, fontWeight:600, color:T.text, lineHeight:1.4 }}>{item.title}</div>
+        {item.snippet && <p style={{ fontSize:11, color:T.dim, margin:0, lineHeight:1.5 }}>{item.snippet.slice(0, 160)}{item.snippet.length > 160 ? "…" : ""}</p>}
       </div>
-      <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ fontSize:13, fontWeight:600, color:T.text, textDecoration:"none", lineHeight:1.4 }}>
-        {item.title}
-      </a>
-      {item.snippet && <p style={{ fontSize:11, color:T.dim, margin:0, lineHeight:1.5 }}>{item.snippet.slice(0, 160)}{item.snippet.length > 160 ? "…" : ""}</p>}
-    </div>
+    </a>
   );
 }
 
@@ -209,23 +221,222 @@ function ArticleTimeline({ articles, onDateClick, selectedDate }) {
   );
 }
 
+// ── Portfolio Health Panel ────────────────────────────────────────────────────
+
+function PortfolioHealth({ companies }) {
+  const withData = companies.filter(c => c.enabled !== false && c.runs?.[0]?.sentimentScore !== undefined);
+  if (withData.length === 0) return null;
+
+  // ── Aggregate metrics ──────────────────────────────────────────────────────
+  const avgSent   = withData.reduce((s, c) => s + c.runs[0].sentimentScore, 0) / withData.length;
+  const totalArt  = withData.reduce((s, c) => s + (c.runs[0].mediaCount || 0), 0);
+  const totalSoc  = withData.reduce((s, c) => s + (c.runs[0].socialCount || 0), 0);
+  const sentPct   = Math.min(100, Math.max(0, (avgSent + 1) / 2 * 100));
+  const sentColor = avgSent > 0.15 ? "#22c55e" : avgSent < -0.15 ? "#ef4444" : "#f59e0b";
+  const sentLabel = avgSent > 0.15 ? "Positive" : avgSent < -0.15 ? "Negative" : "Neutral";
+
+  // ── 90-day trend: collect all (date, sentiment) run data-points ────────────
+  const cutoff = Date.now() - 90 * 86400_000;
+  const points = [];
+  companies.forEach(c => {
+    (c.runs || []).forEach(r => {
+      if (r.ranAt && r.sentimentScore !== undefined) {
+        const t = new Date(r.ranAt).getTime();
+        if (t >= cutoff) points.push({ t, s: r.sentimentScore });
+      }
+    });
+  });
+  points.sort((a, b) => a.t - b.t);
+
+  // Bucket into ~12 weekly slots
+  const trendPoints = (() => {
+    if (points.length < 2) return [];
+    const minT = points[0].t, maxT = points[points.length - 1].t;
+    const range = Math.max(maxT - minT, 1);
+    const buckets = 12;
+    const slots = Array.from({ length: buckets }, () => []);
+    points.forEach(p => {
+      const idx = Math.min(buckets - 1, Math.floor(((p.t - minT) / range) * buckets));
+      slots[idx].push(p.s);
+    });
+    return slots.map((b, i) => ({ i, v: b.length ? b.reduce((a, x) => a + x, 0) / b.length : null }))
+      .filter(p => p.v !== null);
+  })();
+
+  // SVG trend line
+  const TrendLine = () => {
+    if (trendPoints.length < 2) return (
+      <div style={{ fontSize:11, color:T.faint, textAlign:"center", paddingTop:20 }}>
+        Run more companies to build trend data
+      </div>
+    );
+    const W = 280, H = 70, pad = 8;
+    const xs = trendPoints.map(p => pad + (p.i / 11) * (W - pad * 2));
+    const vals = trendPoints.map(p => p.v);
+    const minV = Math.min(...vals, -0.3), maxV = Math.max(...vals, 0.3);
+    const ys = vals.map(v => H - pad - ((v - minV) / (maxV - minV)) * (H - pad * 2));
+    const polyline = xs.map((x, i) => `${x},${ys[i]}`).join(" ");
+    const zeroY = H - pad - ((0 - minV) / (maxV - minV)) * (H - pad * 2);
+    const areaPath = `M${xs[0]},${zeroY} ` + xs.map((x, i) => `L${x},${ys[i]}`).join(" ") + ` L${xs[xs.length-1]},${zeroY} Z`;
+    const lastColor = vals[vals.length-1] > 0.1 ? "#22c55e" : vals[vals.length-1] < -0.1 ? "#ef4444" : "#f59e0b";
+    return (
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ overflow:"visible" }}>
+        <defs>
+          <linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={lastColor} stopOpacity="0.25" />
+            <stop offset="100%" stopColor={lastColor} stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+        {/* Zero line */}
+        {zeroY > pad && zeroY < H - pad && (
+          <line x1={pad} y1={zeroY} x2={W - pad} y2={zeroY} stroke={T.border} strokeWidth="1" strokeDasharray="3,3" />
+        )}
+        <path d={areaPath} fill="url(#trendGrad)" />
+        <polyline points={polyline} fill="none" stroke={lastColor} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        {trendPoints.map((p, i) => (
+          <circle key={i} cx={xs[i]} cy={ys[i]} r="3" fill={lastColor} stroke={T.bg} strokeWidth="1.5" />
+        ))}
+      </svg>
+    );
+  };
+
+  // ── Top movers by sentiment ────────────────────────────────────────────────
+  const sorted = [...withData].sort((a, b) => b.runs[0].sentimentScore - a.runs[0].sentimentScore);
+  const topPos = sorted.slice(0, 3);
+  const topNeg = [...sorted].reverse().slice(0, 3);
+
+  // ── Top by coverage volume ─────────────────────────────────────────────────
+  const byArt = [...withData].sort((a, b) => (b.runs[0].mediaCount||0) - (a.runs[0].mediaCount||0)).slice(0, 5);
+  const bySOC = [...withData].sort((a, b) => (b.runs[0].socialCount||0) - (a.runs[0].socialCount||0)).slice(0, 5);
+  const maxArt = Math.max(...byArt.map(c => c.runs[0].mediaCount||0), 1);
+  const maxSoc = Math.max(...bySOC.map(c => c.runs[0].socialCount||0), 1);
+
+  const Card = ({ title, children, style }) => (
+    <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"14px 16px", ...style }}>
+      <div style={{ fontSize:10, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:12 }}>{title}</div>
+      {children}
+    </div>
+  );
+
+  const MoverRow = ({ company, showBar }) => {
+    const s = company.runs[0].sentimentScore;
+    const c = s > 0.1 ? "#22c55e" : s < -0.1 ? "#ef4444" : "#f59e0b";
+    return (
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:7 }}>
+        <div style={{ flex:1, fontSize:11, color:T.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{company.name}</div>
+        {showBar && (
+          <div style={{ width:60, height:5, background:T.ghost, borderRadius:3, overflow:"hidden" }}>
+            <div style={{ height:"100%", width:`${Math.min(100,(s+1)/2*100)}%`, background:c, borderRadius:3 }} />
+          </div>
+        )}
+        <div style={{ fontSize:11, fontWeight:700, color:c, width:38, textAlign:"right", flexShrink:0 }}>{s >= 0 ? "+" : ""}{s.toFixed(2)}</div>
+      </div>
+    );
+  };
+
+  const CoverageRow = ({ company, field, max }) => {
+    const val = company.runs[0][field] || 0;
+    return (
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+        <div style={{ width:110, fontSize:11, color:T.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", flexShrink:0 }}>{company.name}</div>
+        <div style={{ flex:1, height:6, background:T.ghost, borderRadius:3, overflow:"hidden" }}>
+          <div style={{ height:"100%", width:`${Math.max(3, val/max*100)}%`, background:T.accent, borderRadius:3, opacity:0.8 }} />
+        </div>
+        <div style={{ width:32, textAlign:"right", fontSize:11, color:T.dim, flexShrink:0 }}>{val}</div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ marginBottom:24 }}>
+      {/* Row 1: Health score + trend + stats */}
+      <div style={{ display:"grid", gridTemplateColumns:"220px 1fr 140px 140px", gap:10, marginBottom:10 }}>
+        {/* Health gauge */}
+        <Card title="Portfolio Health">
+          <div style={{ display:"flex", alignItems:"baseline", gap:6, marginBottom:10 }}>
+            <span style={{ fontSize:30, fontWeight:900, color:sentColor, letterSpacing:"-0.04em" }}>{avgSent >= 0 ? "+" : ""}{avgSent.toFixed(2)}</span>
+            <span style={{ fontSize:12, color:sentColor, fontWeight:700 }}>{sentLabel}</span>
+          </div>
+          <div style={{ position:"relative", height:8, borderRadius:4, background:"linear-gradient(to right,#ef4444 0%,#f59e0b 50%,#22c55e 100%)" }}>
+            <div style={{ position:"absolute", left:`${sentPct}%`, top:"50%", transform:"translate(-50%,-50%)", width:14, height:14, borderRadius:"50%", background:"white", border:`2.5px solid ${sentColor}`, boxShadow:"0 1px 4px rgba(0,0,0,0.4)" }} />
+          </div>
+          <div style={{ display:"flex", justifyContent:"space-between", fontSize:9, color:T.faint, marginTop:4 }}>
+            <span>–1</span><span>0</span><span>+1</span>
+          </div>
+          <div style={{ marginTop:10, fontSize:10, color:T.dim }}>{withData.length} companies with data</div>
+        </Card>
+
+        {/* Trend */}
+        <Card title={`Sentiment trend — last 90 days (${points.length} data points)`}>
+          <TrendLine />
+        </Card>
+
+        {/* Total articles */}
+        <Card title="Total Coverage">
+          <div style={{ fontSize:28, fontWeight:800, color:T.text, letterSpacing:"-0.03em" }}>{totalArt.toLocaleString()}</div>
+          <div style={{ fontSize:10, color:T.dim, marginTop:2 }}>articles across portfolio</div>
+          <div style={{ marginTop:10, fontSize:22, fontWeight:800, color:T.text, letterSpacing:"-0.02em" }}>{totalSoc.toLocaleString()}</div>
+          <div style={{ fontSize:10, color:T.dim, marginTop:2 }}>social posts</div>
+        </Card>
+
+        {/* Coverage vs no data */}
+        <Card title="Data Coverage">
+          {(() => {
+            const enabled = companies.filter(c => c.enabled !== false);
+            const pct = Math.round(withData.length / Math.max(enabled.length, 1) * 100);
+            return (
+              <>
+                <div style={{ fontSize:28, fontWeight:800, color:T.accent, letterSpacing:"-0.03em" }}>{pct}%</div>
+                <div style={{ fontSize:10, color:T.dim, marginTop:2 }}>{withData.length} of {enabled.length} companies</div>
+                <div style={{ marginTop:10, height:6, background:T.ghost, borderRadius:3, overflow:"hidden" }}>
+                  <div style={{ height:"100%", width:`${pct}%`, background:T.accent, borderRadius:3 }} />
+                </div>
+                <div style={{ marginTop:8, fontSize:10, color:T.faint }}>{enabled.length - withData.length} need a run</div>
+              </>
+            );
+          })()}
+        </Card>
+      </div>
+
+      {/* Row 2: Top movers + coverage leaders */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10 }}>
+        <Card title="Top performers">
+          {topPos.map(c => <MoverRow key={c.id} company={c} showBar />)}
+        </Card>
+        <Card title="Watch list (lowest sentiment)">
+          {topNeg.map(c => <MoverRow key={c.id} company={c} showBar />)}
+        </Card>
+        <Card title="Most articles">
+          {byArt.map(c => <CoverageRow key={c.id} company={c} field="mediaCount" max={maxArt} />)}
+        </Card>
+        <Card title="Most social posts">
+          {bySOC.map(c => <CoverageRow key={c.id} company={c} field="socialCount" max={maxSoc} />)}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 // ── Portfolio Dashboard ───────────────────────────────────────────────────────
 
-function Portfolio({ companies, settings, onSelect, onRun, onRunAll, onUpdateCompany, onAdd }) {
+function Portfolio({ companies, settings, onSelect, onRun, onRunAll, onUpdateCompany, onAdd, onUpdateSettings }) {
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("All");
   const [sort, setSort] = useState("name");
   const [showDisabled, setShowDisabled] = useState(false);
   const [running, setRunning] = useState(null);
 
+  const firmEntry = companies.find(c => c.isFirm);
+  const portfolioCompanies = companies.filter(c => !c.isFirm);
+
   const allCats = useMemo(() => {
     const s = new Set();
-    companies.forEach(c => (c.categories || []).forEach(x => s.add(x)));
+    portfolioCompanies.forEach(c => (c.categories || []).forEach(x => s.add(x)));
     return ["All", ...Array.from(s).sort()];
-  }, [companies]);
+  }, [portfolioCompanies]);
 
   const filtered = useMemo(() => {
-    let list = companies.filter(c => showDisabled || c.enabled !== false);
+    let list = portfolioCompanies.filter(c => showDisabled || c.enabled !== false);
     if (search) list = list.filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
     if (catFilter !== "All") list = list.filter(c => (c.categories || []).includes(catFilter));
     const lastRun = c => c.runs?.[0];
@@ -239,9 +450,9 @@ function Portfolio({ companies, settings, onSelect, onRun, onRunAll, onUpdateCom
     return list;
   }, [companies, search, catFilter, sort, showDisabled]);
 
-  const activeCount = companies.filter(c => c.enabled !== false && c.runs?.[0]?.isLive).length;
+  const activeCount = portfolioCompanies.filter(c => c.enabled !== false && c.runs?.[0]?.isLive).length;
   const avgSent = (() => {
-    const withData = companies.filter(c => c.runs?.[0]?.sentimentScore !== undefined);
+    const withData = portfolioCompanies.filter(c => c.runs?.[0]?.sentimentScore !== undefined);
     if (!withData.length) return null;
     return withData.reduce((s, c) => s + c.runs[0].sentimentScore, 0) / withData.length;
   })();
@@ -278,6 +489,9 @@ function Portfolio({ companies, settings, onSelect, onRun, onRunAll, onUpdateCom
         </div>
       </div>
 
+      {/* Portfolio health */}
+      <PortfolioHealth companies={portfolioCompanies} />
+
       {/* Filters */}
       <div style={{ display:"flex", gap:10, marginBottom:20, flexWrap:"wrap", alignItems:"center" }}>
         <Input value={search} onChange={setSearch} placeholder="Search companies…" style={{ width:220 }} />
@@ -287,7 +501,7 @@ function Portfolio({ companies, settings, onSelect, onRun, onRunAll, onUpdateCom
           <option value="articles">Sort: Article count</option>
           <option value="recent">Sort: Most recent</option>
         </select>
-        <select value={settings.dateRange} onChange={e => {}} style={{ background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"7px 10px", fontSize:12, color:T.text, outline:"none" }}>
+        <select value={settings.dateRange} onChange={e => onUpdateSettings({ ...settings, dateRange: e.target.value })} style={{ background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"7px 10px", fontSize:12, color:T.text, outline:"none" }}>
           {DATE_RANGES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
         </select>
         <div style={{ display:"flex", gap:4, flexWrap:"wrap", flex:1 }}>
@@ -362,6 +576,83 @@ function Portfolio({ companies, settings, onSelect, onRun, onRunAll, onUpdateCom
           );
         })}
       </div>
+
+      {/* Radical Ventures firm monitoring section */}
+      {firmEntry && (() => {
+        const firmRun = firmEntry.runs?.[0];
+        const firmSent = firmRun?.sentimentScore;
+        const isRunningFirm = running === firmEntry.id;
+        return (
+          <div style={{ marginTop:40 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:14 }}>
+              <div style={{ flex:1, height:1, background:T.border }} />
+              <div style={{ fontSize:11, fontWeight:700, color:T.dim, letterSpacing:"0.08em", textTransform:"uppercase", whiteSpace:"nowrap" }}>Firm Intelligence</div>
+              <div style={{ flex:1, height:1, background:T.border }} />
+            </div>
+            <div
+              onClick={() => onSelect(firmEntry)}
+              style={{ background:`linear-gradient(135deg, rgba(99,102,241,0.08) 0%, rgba(139,92,246,0.06) 100%)`, border:`1px solid rgba(99,102,241,0.3)`, borderRadius:14, padding:"20px 24px", cursor:"pointer", display:"flex", flexWrap:"wrap", gap:20, alignItems:"center", transition:"all 0.15s" }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = "rgba(99,102,241,0.6)"}
+              onMouseLeave={e => e.currentTarget.style.borderColor = "rgba(99,102,241,0.3)"}
+            >
+              {/* Name + description */}
+              <div style={{ flex:"1 1 200px", minWidth:0 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                  <div style={{ width:28, height:28, borderRadius:8, background:"rgba(99,102,241,0.2)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:14 }}>RV</div>
+                  <div style={{ fontSize:17, fontWeight:800, color:T.text }}>Radical Ventures</div>
+                </div>
+                <div style={{ fontSize:11, color:T.dim }}>AI-focused venture fund · <a href="https://radical.vc" target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color:"rgba(99,102,241,0.9)", textDecoration:"none" }}>radical.vc</a></div>
+              </div>
+
+              {/* Sentiment */}
+              <div style={{ flex:"1 1 160px" }}>
+                {firmSent !== undefined ? (
+                  <>
+                    <div style={{ fontSize:11, color:T.dim, marginBottom:4 }}>Sentiment</div>
+                    <div style={{ fontSize:20, fontWeight:800, color:sc(firmSent) }}>{firmSent > 0 ? "+" : ""}{firmSent.toFixed(2)}</div>
+                    <div style={{ height:4, borderRadius:2, background:T.ghost, marginTop:6, overflow:"hidden" }}>
+                      <div style={{ height:"100%", width:`${Math.min(100, ((firmSent+1)/2)*100)}%`, background:sc(firmSent), borderRadius:2 }} />
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize:11, color:T.faint, fontStyle:"italic" }}>No data yet</div>
+                )}
+              </div>
+
+              {/* Coverage counts */}
+              {firmRun && (
+                <div style={{ flex:"1 1 120px" }}>
+                  <div style={{ fontSize:11, color:T.dim, marginBottom:6 }}>Coverage</div>
+                  <div style={{ display:"flex", gap:16 }}>
+                    <div><div style={{ fontSize:18, fontWeight:800, color:T.text }}>{firmRun.mediaCount || 0}</div><div style={{ fontSize:10, color:T.faint }}>Articles</div></div>
+                    <div><div style={{ fontSize:18, fontWeight:800, color:T.text }}>{firmRun.socialCount || 0}</div><div style={{ fontSize:10, color:T.faint }}>Social</div></div>
+                  </div>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div style={{ display:"flex", gap:8, alignItems:"center" }} onClick={e => e.stopPropagation()}>
+                <Btn onClick={() => onSelect(firmEntry)} variant="ghost" style={{ fontSize:11, padding:"6px 14px" }}>View</Btn>
+                <Btn
+                  onClick={async e => { e.stopPropagation(); setRunning(firmEntry.id); await onRun(firmEntry); setRunning(null); }}
+                  variant="primary"
+                  disabled={isRunningFirm}
+                  style={{ fontSize:11, padding:"6px 14px", background:"rgba(99,102,241,0.8)" }}
+                >
+                  {isRunningFirm ? <><Spinner /> …</> : "▶ Run"}
+                </Btn>
+              </div>
+
+              {firmRun && (
+                <div style={{ width:"100%", borderTop:`1px solid rgba(99,102,241,0.15)`, paddingTop:10, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ fontSize:10, color:T.faint }}>Last run: {ago(firmRun.ranAt)}</span>
+                  <span style={{ fontSize:10, color:T.faint }}>{firmEntry.dateRange || settings.dateRange} lookback</span>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -730,6 +1021,149 @@ function SOVTab({ company, settings, onUpdate, toast }) {
 
 // ── Company Detail — Briefing tab ─────────────────────────────────────────────
 
+// ── Briefing data visualisation ───────────────────────────────────────────────
+
+function BriefingCharts({ company }) {
+  const run = company.runs?.[0];
+  if (!run) return null;
+
+  const media   = run.mediaResults  || [];
+  const social  = run.socialResults || [];
+  const sent    = run.sentimentScore || 0;
+  const sentPct = Math.min(100, Math.max(0, (sent + 1) / 2 * 100));
+  const sentColor = sent > 0.2 ? "#22c55e" : sent < -0.2 ? "#ef4444" : "#f59e0b";
+  const sentLabel = sent > 0.2 ? "Positive" : sent < -0.2 ? "Negative" : "Neutral";
+
+  const themes  = detectThemes(media);
+  const maxTheme = Math.max(...themes.map(t => t.articles.length), 1);
+
+  const t1 = media.filter(m => m.tier === 1).length;
+  const t2 = media.filter(m => m.tier === 2).length;
+  const t3 = media.filter(m => m.tier === 3).length;
+  const maxTier = Math.max(t1, t2, t3, 1);
+
+  const byPlat = {};
+  social.forEach(s => { byPlat[s.platform] = (byPlat[s.platform] || 0) + 1; });
+  const platforms = Object.entries(byPlat).sort((a, b) => b[1] - a[1]);
+  const maxPlat = Math.max(...platforms.map(p => p[1]), 1);
+
+  const sov = company.sovRun;
+  const sovRows = sov?.results ? [...sov.results].sort((a, b) => (b.mediaCount||0) - (a.mediaCount||0)) : [];
+  const maxSov = Math.max(...sovRows.map(r => r.mediaCount || 0), 1);
+
+  const Card = ({ title, children, style }) => (
+    <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"14px 16px", ...style }}>
+      <div style={{ fontSize:10, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:12 }}>{title}</div>
+      {children}
+    </div>
+  );
+
+  const MiniBar = ({ label, count, max, color, labelWidth = 110 }) => (
+    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+      <div style={{ width:labelWidth, fontSize:11, color:T.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", flexShrink:0 }}>{label}</div>
+      <div style={{ flex:1, height:7, background:T.ghost, borderRadius:4, overflow:"hidden" }}>
+        <div style={{ height:"100%", width:`${Math.max(2, count/max*100)}%`, background:color, borderRadius:4 }} />
+      </div>
+      <div style={{ width:26, textAlign:"right", fontSize:11, color:T.dim, flexShrink:0 }}>{count}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:4 }}>
+      {/* Row 1: Sentiment + Tier + History */}
+      <div style={{ display:"grid", gridTemplateColumns:`1fr 180px${company.runs?.length > 1 ? " 160px" : ""}`, gap:12 }}>
+        {/* Sentiment meter */}
+        <Card title="Overall Sentiment">
+          <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:10 }}>
+            <span style={{ fontSize:28, fontWeight:800, color:sentColor, letterSpacing:"-0.03em" }}>{sent >= 0 ? "+" : ""}{sent.toFixed(2)}</span>
+            <span style={{ fontSize:12, color:sentColor, fontWeight:600 }}>{sentLabel}</span>
+            <span style={{ fontSize:11, color:T.faint, marginLeft:"auto" }}>{media.length} articles · {social.length} posts</span>
+          </div>
+          <div style={{ position:"relative", height:10, borderRadius:5, background:"linear-gradient(to right, #ef4444 0%, #f59e0b 50%, #22c55e 100%)" }}>
+            <div style={{ position:"absolute", left:`${sentPct}%`, top:"50%", transform:"translate(-50%,-50%)", width:16, height:16, borderRadius:"50%", background:"white", border:`2.5px solid ${sentColor}`, boxShadow:"0 1px 6px rgba(0,0,0,0.4)" }} />
+          </div>
+          <div style={{ display:"flex", justifyContent:"space-between", fontSize:9, color:T.faint, marginTop:5 }}>
+            <span>Very Negative</span><span>Neutral</span><span>Very Positive</span>
+          </div>
+          {run.keyDrivers?.length > 0 && (
+            <div style={{ marginTop:10, display:"flex", gap:5, flexWrap:"wrap" }}>
+              {run.keyDrivers.map((d, i) => <Tag key={i} label={d} color={T.accent} />)}
+            </div>
+          )}
+        </Card>
+
+        {/* Tier split */}
+        <Card title="Outlet Tiers">
+          {[["Tier 1", t1, "#818cf8"], ["Tier 2", t2, "#60a5fa"], ["Tier 3", t3, "#94a3b8"]].map(([label, count, color]) => (
+            <MiniBar key={label} label={label} count={count} max={maxTier} color={color} labelWidth={46} />
+          ))}
+        </Card>
+
+        {/* Sentiment history sparkline */}
+        {company.runs?.length > 1 && (
+          <Card title="Trend">
+            <div style={{ display:"flex", alignItems:"flex-end", gap:6, height:52 }}>
+              {[...company.runs].reverse().map((r, i) => {
+                const s = r.sentimentScore || 0;
+                const h = Math.round(Math.abs(s) * 44 + 8);
+                const c = s > 0.2 ? "#22c55e" : s < -0.2 ? "#ef4444" : "#f59e0b";
+                return (
+                  <div key={i} title={`${r.ranAt?.slice(0,10)}: ${s >= 0 ? "+" : ""}${s.toFixed(2)}`}
+                    style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:3 }}>
+                    <div style={{ width:"100%", height:h, background:c, borderRadius:3, opacity:0.85 }} />
+                    <div style={{ fontSize:8, color:T.faint, whiteSpace:"nowrap" }}>{r.ranAt?.slice(5,10)||""}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        )}
+      </div>
+
+      {/* Row 2: Coverage Themes (full width if prominent) */}
+      {themes.length > 0 && (
+        <Card title={`Coverage Themes (${themes.length} detected across ${media.length} articles)`}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 24px" }}>
+            {themes.slice(0, 8).map(t => (
+              <MiniBar key={t.id} label={t.label} count={t.articles.length} max={maxTheme} color={T.accent} labelWidth={150} />
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Row 3: Social + SOV side by side */}
+      {(platforms.length > 0 || sovRows.length > 0) && (
+        <div style={{ display:"grid", gridTemplateColumns:platforms.length > 0 && sovRows.length > 0 ? "1fr 1fr" : "1fr", gap:12 }}>
+          {platforms.length > 0 && (
+            <Card title="Social Platforms">
+              {platforms.map(([plat, count]) => {
+                const meta = PLAT[plat] || { color:T.dim, icon:"◈" };
+                return <MiniBar key={plat} label={`${meta.icon} ${plat}`} count={count} max={maxPlat} color={meta.color} labelWidth={90} />;
+              })}
+            </Card>
+          )}
+          {sovRows.length > 0 && (
+            <Card title={`Share of Voice vs Peers (${sov.ranAt?.slice(0,10)||"last run"})`}>
+              {sovRows.map(r => (
+                <div key={r.name} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+                  <div style={{ width:110, fontSize:11, fontWeight:r.isBase?700:400, color:r.isBase?T.accent:T.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", flexShrink:0 }}>{r.name}</div>
+                  <div style={{ flex:1, height:7, background:T.ghost, borderRadius:4, overflow:"hidden" }}>
+                    <div style={{ height:"100%", width:`${Math.max(2,(r.mediaCount||0)/maxSov*100)}%`, background:r.isBase?T.accent:T.dim, borderRadius:4 }} />
+                  </div>
+                  <div style={{ width:26, textAlign:"right", fontSize:11, color:T.dim, flexShrink:0 }}>{r.mediaCount||0}</div>
+                  <Pip score={r.sentiment||0} size={9} />
+                </div>
+              ))}
+            </Card>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Company Detail — Briefing tab ─────────────────────────────────────────────
+
 function BriefingTab({ company, settings, onUpdate, toast }) {
   const [persona, setPersona] = useState("exec");
   const [briefing, setBriefing] = useState("");
@@ -785,6 +1219,9 @@ function BriefingTab({ company, settings, onUpdate, toast }) {
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+      {/* Data charts — always visible when run data exists */}
+      <BriefingCharts company={company} />
+
       {/* Contact email (shown for report persona) */}
       {persona === "report" && (
         <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"14px 18px" }}>
@@ -851,6 +1288,7 @@ function CompanyDetail({ company, settings, onBack, onRun, onUpdate, toast }) {
       toast("Add at least one API key in Admin → API Keys", "error"); return;
     }
     setRunning(true);
+    await bustCompanyCache(company.name);
     try {
       const result = await runCompany(company, { ...settings, dateRange }, setProgress);
       const updatedRuns = [result, ...(company.runs || [])].slice(0, 3);
@@ -864,6 +1302,7 @@ function CompanyDetail({ company, settings, onBack, onRun, onUpdate, toast }) {
   const saveQuery = () => {
     onUpdate({ ...company, boolean_query: queryDraft, boolean_approved: true });
     setEditingQuery(false);
+    bustCompanyCache(company.name);
   };
 
   const tabs = [
@@ -1335,6 +1774,7 @@ export default function App() {
             onRunAll={handleRunAll}
             onUpdateCompany={updateCompany}
             onAdd={() => setShowAddModal(true)}
+            onUpdateSettings={updateSettings}
           />
         ) : view === "signals" ? (
           <Signals companies={companies} />

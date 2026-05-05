@@ -3,6 +3,16 @@ import { BOOLEAN_QUERIES, BLOCKED_DOMAINS, DATE_RANGES } from "./data.js";
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
+export async function bustCompanyCache(companyName) {
+  if (!companyName) return;
+  try {
+    await fetch(
+      `http://localhost:3001/cache-bust?company=${encodeURIComponent(companyName)}`,
+      { method: "DELETE" }
+    );
+  } catch {}
+}
+
 export function dateRangeFrom(days) {
   const d = new Date();
   d.setDate(d.getDate() - days);
@@ -48,7 +58,7 @@ export async function callLLM(userPrompt, systemPrompt, apiKeys) {
     const body = {
       contents: [{ role: "user", parts: [{ text: userPrompt }] }],
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      generationConfig: { maxOutputTokens: 1024, temperature: 0.1 },
+      generationConfig: { maxOutputTokens: 4096, temperature: 0.1 },
     };
     const r = await fetch(
       "http://localhost:3001/vertex/v1/projects/velvety-argon-494701-g1/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent",
@@ -64,7 +74,7 @@ export async function callLLM(userPrompt, systemPrompt, apiKeys) {
     const body = {
       contents: [{ parts: [{ text: userPrompt }] }],
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      generationConfig: { maxOutputTokens: 1024, temperature: 0.1 },
+      generationConfig: { maxOutputTokens: 4096, temperature: 0.1 },
     };
     const r = await fetch(
       `http://localhost:3001/gemini/v1beta/models/gemini-2.5-flash:generateContent?key=${gemini}`,
@@ -86,7 +96,7 @@ export async function callLLM(userPrompt, systemPrompt, apiKeys) {
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 1024,
+        max_tokens: 4096,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
       }),
@@ -567,7 +577,7 @@ export async function runSOV(company, competitors, settings, onProgress) {
 
 // ── Theme detection ───────────────────────────────────────────────────────────
 
-const THEMES = [
+export const THEMES = [
   { id:"fundraise",   label:"Fundraise / Funding",    terms:["raises","raised","funding","series a","series b","series c","seed round","investment round","backed","valuation","venture","capital raise","ipo","spac"] },
   { id:"partnership", label:"Partnership / Deal",      terms:["partnership","partner","partners","deal","agreement","collaboration","collaborates","integrates","integration","signed","alliance","joint venture","signed agreement"] },
   { id:"product",     label:"Product / Launch",        terms:["launches","launched","launch","announces","announcement","announced","product","platform","releases","release","introduces","unveils","unveiled","new feature","beta","generally available","ga "] },
@@ -579,7 +589,7 @@ const THEMES = [
   { id:"risk",        label:"Risk / Controversy",      terms:["lawsuit","investigation","controversy","backlash","criticism","breach","hack","hacked","fraud","warning","recall","ban","blocked","regulatory","scrutiny","concern","problem","trouble","failure","fired","layoff","layoffs"] },
 ];
 
-function detectThemes(articles) {
+export function detectThemes(articles) {
   const buckets = {};
   THEMES.forEach(t => { buckets[t.id] = []; });
 
