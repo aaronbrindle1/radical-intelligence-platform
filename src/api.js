@@ -408,12 +408,16 @@ export async function fetchTwitter(company, fromDate, twitterKey, maxPages = 3, 
       const params = new URLSearchParams({ query: fullQuery, queryType: "Latest" });
       if (cursor) params.set("cursor", cursor);
 
-      const r = await fetch(
-        `http://localhost:3001/twitter/twitter/tweet/advanced_search?${params}`,
-        { headers: { "x-twitter-key": twitterKey } }
-      );
-      if (!r.ok) { console.warn("[twitter] HTTP", r.status); break; }
+      const fetchUrl = `http://localhost:3001/twitter/twitter/tweet/advanced_search?${params}`;
+      console.log(`[twitter] page ${page+1} → ${fetchUrl.split("?")[0]}, query: ${fullQuery.slice(0,80)}`);
+      const r = await fetch(fetchUrl, { headers: { "x-twitter-key": twitterKey } });
+      if (!r.ok) {
+        const errText = await r.text().catch(() => "");
+        console.warn(`[twitter] HTTP ${r.status}:`, errText.slice(0, 200));
+        break;
+      }
       const d = await r.json();
+      if (d.error || d.errors) { console.warn("[twitter] API error:", d.error || JSON.stringify(d.errors)); break; }
       const tweets = Array.isArray(d.tweets) ? d.tweets : [];
       pagesUsed++;
       estimatedCost += tweets.length * TWITTER_COST_PER_TWEET;

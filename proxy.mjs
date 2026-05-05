@@ -371,6 +371,44 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Twitter connection test ───────────────────────────────────────────────
+  if (url.startsWith("/twitter-test")) {
+    const params = new URL(url, "http://localhost").searchParams;
+    const twitterKey = params.get("key") || req.headers["x-twitter-key"] || "";
+    if (!twitterKey) {
+      res.writeHead(400, { "Access-Control-Allow-Origin": ALLOWED_ORIGIN, "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "No API key provided" }));
+      return;
+    }
+    const testUrl = `https://api.twitterapi.io/twitter/tweet/advanced_search?query=%22artificial+intelligence%22&queryType=Latest`;
+    console.log(`[twitter-test] Calling ${testUrl} with key ${twitterKey.slice(0,8)}...`);
+    const testReq = https.request(testUrl, {
+      method: "GET",
+      headers: { "x-api-key": twitterKey, "Content-Type": "application/json" },
+    }, testRes => {
+      let d = "";
+      testRes.on("data", c => d += c);
+      testRes.on("end", () => {
+        console.log(`[twitter-test] status=${testRes.statusCode} body=${d.slice(0,200)}`);
+        try {
+          const body = JSON.parse(d);
+          const tweetCount = (body.tweets || []).length;
+          res.writeHead(200, { "Access-Control-Allow-Origin": ALLOWED_ORIGIN, "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: testRes.statusCode === 200, status: testRes.statusCode, tweetCount, sample: (body.tweets || [])[0]?.text?.slice(0,100) || null, rawError: body.errors || body.error || null }));
+        } catch {
+          res.writeHead(200, { "Access-Control-Allow-Origin": ALLOWED_ORIGIN, "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, status: testRes.statusCode, rawBody: d.slice(0,300) }));
+        }
+      });
+    });
+    testReq.on("error", e => {
+      res.writeHead(200, { "Access-Control-Allow-Origin": ALLOWED_ORIGIN, "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: e.message }));
+    });
+    testReq.end();
+    return;
+  }
+
   // ── Cache bust — DELETE /cache-bust?company=Writer ───────────────────────
   if (url.startsWith("/cache-bust") && req.method === "DELETE") {
     const params = new URL(url, "http://localhost").searchParams;

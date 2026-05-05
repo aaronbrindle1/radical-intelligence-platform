@@ -1478,6 +1478,24 @@ function Admin({ settings, outlets, companies, onUpdateSettings, onUpdateOutlets
     ]},
   ];
 
+  const [twitterTestResult, setTwitterTestResult] = useState(null);
+  const [twitterTesting, setTwitterTesting] = useState(false);
+
+  const handleTwitterTest = async () => {
+    const key = apiKeys.twitter;
+    if (!key) { setTwitterTestResult({ ok: false, error: "No API key entered" }); return; }
+    setTwitterTesting(true);
+    setTwitterTestResult(null);
+    try {
+      const r = await fetch(`http://localhost:3001/twitter-test?key=${encodeURIComponent(key)}`);
+      const d = await r.json();
+      setTwitterTestResult(d);
+    } catch (e) {
+      setTwitterTestResult({ ok: false, error: `Proxy unreachable: ${e.message}. Restart the proxy (double-click START-MAC.command).` });
+    }
+    setTwitterTesting(false);
+  };
+
   const filteredOutlets = useMemo(() => {
     let list = outlets;
     if (outletSearch) list = list.filter(o => (o.name || "").toLowerCase().includes(outletSearch.toLowerCase()));
@@ -1564,7 +1582,29 @@ function Admin({ settings, outlets, companies, onUpdateSettings, onUpdateOutlets
                   <input type="password" value={apiKeys.twitter || ""} onChange={e => setKey("twitter", e.target.value)} placeholder="Your twitterapi.io key"
                     style={{ width:"100%", background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"7px 11px", fontSize:12, color:T.text, outline:"none", fontFamily:"monospace", boxSizing:"border-box" }}
                   />
-                  <div style={{ fontSize:10, color:T.faint, marginTop:5 }}>$0.15 per 1,000 tweets fetched · pay-as-you-go · ~$0.003 per page (20 tweets)</div>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, flexWrap:"wrap" }}>
+                    <span style={{ fontSize:10, color:T.faint }}>$0.15 per 1,000 tweets · ~$0.003 per page</span>
+                    <Btn onClick={handleTwitterTest} disabled={twitterTesting} variant="ghost" style={{ fontSize:10, padding:"2px 8px" }}>
+                      {twitterTesting ? <><Spinner /> Testing…</> : "Test connection"}
+                    </Btn>
+                  </div>
+                  {twitterTestResult && (
+                    <div style={{ marginTop:8, padding:"8px 12px", borderRadius:8, background: twitterTestResult.ok ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)", border:`1px solid ${twitterTestResult.ok ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`, fontSize:11 }}>
+                      {twitterTestResult.ok ? (
+                        <>
+                          <span style={{ color:"#4ade80", fontWeight:700 }}>✓ Connected</span>
+                          <span style={{ color:T.dim }}> · {twitterTestResult.tweetCount} tweets returned</span>
+                          {twitterTestResult.sample && <div style={{ color:T.faint, marginTop:4, fontStyle:"italic" }}>"{twitterTestResult.sample}…"</div>}
+                        </>
+                      ) : (
+                        <>
+                          <span style={{ color:"#f87171", fontWeight:700 }}>✗ Failed</span>
+                          <span style={{ color:T.dim }}> · {twitterTestResult.error || `HTTP ${twitterTestResult.status}`}</span>
+                          {twitterTestResult.rawBody && <div style={{ color:T.faint, marginTop:4, fontFamily:"monospace", fontSize:10 }}>{twitterTestResult.rawBody}</div>}
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
                 {/* Enable toggle */}
                 <label style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, cursor:"pointer", paddingTop:4 }}>
