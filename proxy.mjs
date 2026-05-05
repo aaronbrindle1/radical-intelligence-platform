@@ -10,7 +10,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
 import { execSync } from "child_process";
-import { getCache, setCache } from "./src/cache.js";
+import { getCache, setCache, bustNewsCache } from "./src/cache.js";
 
 // ── Service Account JWT Token Cache ──────────────────────────────────────────
 let _vertexTokenCache = null;
@@ -224,7 +224,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
       "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key, X-Client-Name, anthropic-version, x-api-key",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key, X-Client-Name, anthropic-version, x-api-key, x-twitter-key",
       "Access-Control-Max-Age": "86400",
     });
     res.end();
@@ -255,6 +255,19 @@ const server = http.createServer(async (req, res) => {
   if (url.startsWith("/data365/")) {
     const path = url.replace("/data365/", "");
     proxyRequest(req, res, `https://api.data365.co/${path}`);
+    return;
+  }
+
+  // ── TwitterAPI.io ─────────────────────────────────────────────────────────
+  if (url.startsWith("/twitter/")) {
+    const path = url.replace("/twitter", "");
+    const twitterKey = req.headers["x-twitter-key"] || "";
+    if (!twitterKey) {
+      res.writeHead(401, { "Access-Control-Allow-Origin": ALLOWED_ORIGIN, "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "x-twitter-key header required" }));
+      return;
+    }
+    proxyRequest(req, res, `https://api.twitterapi.io${path}`, { "x-api-key": twitterKey });
     return;
   }
 
@@ -358,6 +371,22 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Cache bust — DELETE /cache-bust?company=Writer ───────────────────────
+  if (url.startsWith("/cache-bust") && req.method === "DELETE") {
+    const params = new URL(url, "http://localhost").searchParams;
+    const term = params.get("company") || "";
+    if (!term) {
+      res.writeHead(400, { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "?company= required" }));
+      return;
+    }
+    const deleted = bustNewsCache(term);
+    console.log(`[cache] Busted ${deleted} entries for "${term}"`);
+    res.writeHead(200, { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" });
+    res.end(JSON.stringify({ deleted, term }));
+    return;
+  }
+
   // ── Health check ─────────────────────────────────────────────────────────
   if (url === "/" || url === "/health") {
     res.writeHead(200, { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" });
@@ -404,6 +433,7 @@ server.listen(PORT, () => {
 ║   /newsapi/*        → newsapi.org                             ║
 ║   /yutori/*         → api.yutori.com                          ║
 ║   /data365/*        → api.data365.co                          ║
+║   /twitter/*        → api.twitterapi.io (x-twitter-key hdr)  ║
 ║   /cohere/*         → radical.cloud.cohere.com                ║
 ║   /cohere-public/*  → api.cohere.ai                           ║
 ║   /anthropic/*      → api.anthropic.com                       ║

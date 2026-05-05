@@ -25,7 +25,7 @@ function loadState() {
         if (canon?.isFirm && !c.isFirm) return { ...c, isFirm: true };
         return c;
       });
-      return saved;
+      return migrateSettings(saved);
     }
   } catch {}
   // Migrate from old keys
@@ -54,18 +54,32 @@ function loadState() {
         cohere_north_model: localStorage.getItem("radical_cohere_north_model") || "command-r-plus",
         vertex_enabled: localStorage.getItem("radical_vertex_enabled") !== "false",
       };
-      return { companies, outlets: DEFAULT_OUTLETS, settings: { apiKeys, features: { social: true, yutoriResearch: true, sentiment: true }, dateRange: "30d" } };
+      return migrateSettings({ companies, outlets: DEFAULT_OUTLETS, settings: { apiKeys, features: { social: true, yutoriResearch: true, sentiment: true }, dateRange: "30d" } });
     }
   } catch {}
   return {
     companies: buildInitialCompanies(),
     outlets: DEFAULT_OUTLETS,
     settings: {
-      apiKeys: { newsapi:"", yutori:"", data365:"", gemini:"", anthropic:"", cohere:"", cohere_north_key:"", cohere_north_hostname:"radical.cloud.cohere.com", cohere_north_model:"command-r-plus", vertex_enabled:true },
-      features: { social: true, yutoriResearch: true, sentiment: true },
+      apiKeys: { newsapi:"", twitter:"", yutori:"", data365:"", gemini:"", anthropic:"", cohere:"", cohere_north_key:"", cohere_north_hostname:"radical.cloud.cohere.com", cohere_north_model:"command-r-plus", vertex_enabled:true },
+      features: { newsEnabled:true, twitterEnabled:false, twitterMaxPages:3, twitterBudgetMonthly:10, sentiment:true, social:true, yutoriResearch:true },
+      twitterSpend: {},
       dateRange: "30d",
     },
   };
+}
+
+function migrateSettings(state) {
+  const s = state.settings || {};
+  const f = { ...s.features };
+  if (f.newsEnabled === undefined)         f.newsEnabled = true;
+  if (f.twitterEnabled === undefined)      f.twitterEnabled = false;
+  if (f.twitterMaxPages === undefined)     f.twitterMaxPages = 3;
+  if (f.twitterBudgetMonthly === undefined) f.twitterBudgetMonthly = 10;
+  if (f.sentiment === undefined)           f.sentiment = true;
+  const apiKeys = { ...s.apiKeys };
+  if (apiKeys.twitter === undefined) apiKeys.twitter = "";
+  return { ...state, settings: { ...s, apiKeys, features: f, twitterSpend: s.twitterSpend || {} } };
 }
 
 function saveState(state) {
@@ -488,8 +502,22 @@ function Portfolio({ companies, settings, onSelect, onRun, onRunAll, onUpdateCom
             {avgSent !== null && <> · Avg sentiment: <span style={{ color:sc(avgSent), fontWeight:700 }}>{avgSent > 0 ? "+" : ""}{avgSent.toFixed(2)}</span></>}
           </div>
         </div>
-        <div style={{ display:"flex", gap:8 }}>
-          <Btn onClick={onAdd} variant="ghost">+ Add company</Btn>
+        <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+          {/* Quick source toggles */}
+          {[
+            { key:"newsEnabled",    label:"News",    color:"#60a5fa", default:true },
+            { key:"twitterEnabled", label:"Twitter", color:"#1d9bf0" },
+          ].map(s => {
+            const on = settings.features?.[s.key] ?? s.default ?? false;
+            return (
+              <button key={s.key} onClick={() => onUpdateSettings({ ...settings, features: { ...settings.features, [s.key]: !on } })}
+                title={`${on ? "Disable" : "Enable"} ${s.label} for all runs`}
+                style={{ padding:"4px 10px", borderRadius:20, fontSize:11, fontWeight:700, cursor:"pointer", border:`1px solid ${on ? s.color+"60" : T.border}`, background:on ? `${s.color}18` : "transparent", color:on ? s.color : T.faint, display:"flex", alignItems:"center", gap:4 }}>
+                {on ? "●" : "○"} {s.label}
+              </button>
+            );
+          })}
+          <Btn onClick={onAdd} variant="ghost">+ Add</Btn>
           <Btn onClick={handleRunAll} variant="primary" disabled={running === "all"}>
             {running === "all" ? <><Spinner /> Running all…</> : "▶ Run all"}
           </Btn>
@@ -1280,7 +1308,7 @@ function BriefingTab({ company, settings, onUpdate, toast }) {
 
 // ── Company Detail ────────────────────────────────────────────────────────────
 
-function CompanyDetail({ company, settings, onBack, onRun, onUpdate, toast }) {
+function CompanyDetail({ company, settings, onBack, onRun, onUpdate, onUpdateSettings, toast }) {
   const [tab, setTab] = useState("overview");
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState("");
@@ -1291,8 +1319,12 @@ function CompanyDetail({ company, settings, onBack, onRun, onUpdate, toast }) {
   const run = company.runs?.[0];
 
   const handleRun = async () => {
-    if (!settings.apiKeys.newsapi && !settings.apiKeys.yutori && !settings.apiKeys.data365) {
-      toast("Add at least one API key in Admin → API Keys", "error"); return;
+    const { apiKeys, features } = settings;
+    const hasNews    = features.newsEnabled !== false && !!apiKeys.newsapi;
+    const hasTwitter = !!(features.twitterEnabled && apiKeys.twitter);
+    const hasLegacy  = !!(apiKeys.yutori || apiKeys.data365);
+    if (!hasNews && !hasTwitter && !hasLegacy) {
+      toast("Configure API keys in Admin → API Keys", "error"); return;
     }
     setRunning(true);
     await bustCompanyCache(company.name);
@@ -1300,7 +1332,13 @@ function CompanyDetail({ company, settings, onBack, onRun, onUpdate, toast }) {
       const result = await runCompany(company, { ...settings, dateRange }, setProgress);
       const updatedRuns = [result, ...(company.runs || [])].slice(0, 3);
       onUpdate({ ...company, runs: updatedRuns });
-      toast(`${result.mediaCount} articles, ${result.socialCount} social posts`, "success");
+      // Track Twitter spend
+      if (result.twitterCost > 0 && onUpdateSettings) {
+        const monthKey = new Date().toISOString().slice(0, 7);
+        const prev = settings.twitterSpend || {};
+        onUpdateSettings({ ...settings, twitterSpend: { ...prev, [monthKey]: (prev[monthKey] || 0) + result.twitterCost } });
+      }
+      toast(`${result.mediaCount} articles · ${result.socialCount} social posts${result.twitterCost > 0 ? ` · ~$${result.twitterCost.toFixed(4)} Twitter` : ""}`, "success");
     } catch (e) { toast("Run failed: " + e.message, "error"); }
     setRunning(false);
     setProgress("");
@@ -1342,7 +1380,22 @@ function CompanyDetail({ company, settings, onBack, onRun, onUpdate, toast }) {
 
         {/* Run controls */}
         <div style={{ display:"flex", flexDirection:"column", gap:8, alignItems:"flex-end" }}>
-          <div style={{ display:"flex", gap:8 }}>
+          <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap", justifyContent:"flex-end" }}>
+            {/* Source toggles */}
+            {[
+              { key:"newsEnabled",    label:"News",    color:"#60a5fa", default:true },
+              { key:"twitterEnabled", label:"Twitter", color:"#1d9bf0" },
+            ].map(s => {
+              const on = settings.features?.[s.key] ?? s.default ?? false;
+              return (
+                <button key={s.key}
+                  onClick={() => onUpdateSettings && onUpdateSettings({ ...settings, features: { ...settings.features, [s.key]: !on } })}
+                  title={`${on ? "Disable" : "Enable"} ${s.label}`}
+                  style={{ padding:"3px 9px", borderRadius:20, fontSize:10, fontWeight:700, cursor:"pointer", border:`1px solid ${on ? s.color+"60" : T.border}`, background:on ? `${s.color}18` : "transparent", color:on ? s.color : T.faint }}>
+                  {on ? "●" : "○"} {s.label}
+                </button>
+              );
+            })}
             <select value={dateRange} onChange={e => setDateRange(e.target.value)} style={{ background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"6px 10px", fontSize:12, color:T.text, outline:"none" }}>
               {DATE_RANGES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
             </select>
@@ -1408,13 +1461,14 @@ function Admin({ settings, outlets, companies, onUpdateSettings, onUpdateOutlets
   const setFeature = (k, v) => onUpdateSettings({ ...settings, features: { ...features, [k]: v } });
   const setDateRange = v => onUpdateSettings({ ...settings, dateRange: v });
 
+  const monthKey = new Date().toISOString().slice(0, 7);
+  const twitterSpentThisMonth = (settings.twitterSpend || {})[monthKey] || 0;
+  const twitterBudget = features.twitterBudgetMonthly || 10;
+  const twitterBudgetPct = Math.min(100, (twitterSpentThisMonth / twitterBudget) * 100);
+
   const API_KEYS_CONFIG = [
     { group:"News", keys:[
       { id:"newsapi", label:"NewsAPI", placeholder:"Enter NewsAPI key", note:"Primary news source — 150k+ publications. Free: 100 req/day. Paid: unlimited.", url:"https://newsapi.org", required:true },
-    ]},
-    { group:"Social", keys:[
-      { id:"yutori", label:"Yutori", placeholder:"Your Yutori API key", note:"Recommended: Covers Twitter/X, Reddit, LinkedIn, HN, web. Scout (free) + Research (~$0.35/run).", url:"https://docs.yutori.com" },
-      { id:"data365", label:"Data365", placeholder:"Enter Data365 key", note:"Reddit fallback if Yutori unavailable.", url:"https://data365.co" },
     ]},
     { group:"LLM (sentiment & briefings)", keys:[
       { id:"gemini", label:"Google Gemini", placeholder:"AIzaSy…", note:"Public Gemini API from Google AI Studio.", url:"https://aistudio.google.com" },
@@ -1492,6 +1546,71 @@ function Admin({ settings, outlets, companies, onUpdateSettings, onUpdateOutlets
             </div>
           </div>
 
+          {/* Twitter / X */}
+          <div>
+            <div style={{ fontSize:12, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Social — Twitter / X</div>
+            <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"16px 20px", display:"flex", flexDirection:"column", gap:14 }}>
+              {/* Key + enable row */}
+              <div style={{ display:"flex", alignItems:"flex-start", gap:12, flexWrap:"wrap" }}>
+                <div style={{ flex:"1 1 280px" }}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:6 }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:T.text }}>TwitterAPI.io</div>
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      {apiKeys.twitter ? <span style={{ fontSize:10, color:"#4ade80", background:"rgba(34,197,94,0.1)", padding:"2px 8px", borderRadius:10 }}>● Connected</span>
+                        : <span style={{ fontSize:10, color:T.faint, background:T.ghost, padding:"2px 8px", borderRadius:10 }}>○ Not set</span>}
+                      <a href="https://twitterapi.io/dashboard" target="_blank" rel="noopener noreferrer" style={{ fontSize:10, color:T.accent, textDecoration:"none" }}>Get key ↗</a>
+                    </div>
+                  </div>
+                  <input type="password" value={apiKeys.twitter || ""} onChange={e => setKey("twitter", e.target.value)} placeholder="Your twitterapi.io key"
+                    style={{ width:"100%", background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"7px 11px", fontSize:12, color:T.text, outline:"none", fontFamily:"monospace", boxSizing:"border-box" }}
+                  />
+                  <div style={{ fontSize:10, color:T.faint, marginTop:5 }}>$0.15 per 1,000 tweets fetched · pay-as-you-go · ~$0.003 per page (20 tweets)</div>
+                </div>
+                {/* Enable toggle */}
+                <label style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, cursor:"pointer", paddingTop:4 }}>
+                  <span style={{ fontSize:10, color:T.dim }}>Enabled</span>
+                  <span style={{ fontSize:11, fontWeight:700, color:features.twitterEnabled ? "#4ade80" : T.faint }}>{features.twitterEnabled ? "On" : "Off"}</span>
+                  <input type="checkbox" checked={!!features.twitterEnabled} onChange={e => setFeature("twitterEnabled", e.target.checked)} />
+                </label>
+              </div>
+
+              {/* Budget & spend */}
+              <div style={{ borderTop:`1px solid ${T.border}`, paddingTop:12, display:"flex", gap:20, flexWrap:"wrap", alignItems:"center" }}>
+                <div>
+                  <div style={{ fontSize:11, color:T.dim, marginBottom:4 }}>Monthly budget cap</div>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <span style={{ fontSize:13, color:T.faint }}>$</span>
+                    <input type="number" min="0" step="5" value={features.twitterBudgetMonthly ?? 10}
+                      onChange={e => setFeature("twitterBudgetMonthly", parseFloat(e.target.value) || 0)}
+                      style={{ width:70, background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"5px 8px", fontSize:12, color:T.text, outline:"none" }}
+                    />
+                    <span style={{ fontSize:11, color:T.faint }}>/ month</span>
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize:11, color:T.dim, marginBottom:4 }}>Pages per run (20 tweets each)</div>
+                  <input type="number" min="1" max="10" step="1" value={features.twitterMaxPages ?? 3}
+                    onChange={e => setFeature("twitterMaxPages", parseInt(e.target.value) || 3)}
+                    style={{ width:60, background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"5px 8px", fontSize:12, color:T.text, outline:"none" }}
+                  />
+                  <div style={{ fontSize:10, color:T.faint, marginTop:3 }}>~${((features.twitterMaxPages ?? 3) * 20 * 0.00015).toFixed(4)} / run</div>
+                </div>
+                <div style={{ flex:"1 1 200px" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                    <span style={{ fontSize:11, color:T.dim }}>Spent this month ({monthKey})</span>
+                    <span style={{ fontSize:11, fontWeight:700, color:twitterBudgetPct > 80 ? "#f87171" : twitterBudgetPct > 50 ? "#fbbf24" : T.text }}>
+                      ${twitterSpentThisMonth.toFixed(4)} / ${twitterBudget}
+                    </span>
+                  </div>
+                  <div style={{ height:6, borderRadius:3, background:T.ghost, overflow:"hidden" }}>
+                    <div style={{ height:"100%", width:`${twitterBudgetPct}%`, background:twitterBudgetPct > 80 ? "#f87171" : twitterBudgetPct > 50 ? "#fbbf24" : T.accent, borderRadius:3, transition:"width 0.4s" }} />
+                  </div>
+                  {twitterBudgetPct >= 100 && <div style={{ fontSize:10, color:"#f87171", marginTop:4 }}>Budget reached — Twitter fetches paused until next month</div>}
+                </div>
+              </div>
+            </div>
+          </div>
+
           {API_KEYS_CONFIG.map(group => (
             <div key={group.group}>
               <div style={{ fontSize:12, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>{group.group}</div>
@@ -1520,10 +1639,12 @@ function Admin({ settings, outlets, companies, onUpdateSettings, onUpdateOutlets
 
       {tab === "features" && (
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          {/* Data sources — quick toggles */}
+          <div style={{ fontSize:12, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:2 }}>Data sources</div>
           {[
-            { id:"social", label:"Social media tracking", desc:"Fetch social posts (Yutori / Data365). Disable to save API credits." },
-            { id:"yutoriResearch", label:"Yutori Research (deep search)", desc:"$0.35/company/run — deep real-time search. Disable for scout-only mode." },
-            { id:"sentiment", label:"AI sentiment analysis", desc:"Use LLM to score sentiment. Disable to use fast keyword scoring only." },
+            { id:"newsEnabled",    label:"News (NewsAPI)",       desc:`Fetch articles from 150k+ publications. Requires NewsAPI key.${apiKeys.newsapi ? "" : " — No key set."}` },
+            { id:"twitterEnabled", label:"Twitter / X",          desc:`Fetch tweet mentions via TwitterAPI.io. $${((features.twitterMaxPages||3)*20*0.00015).toFixed(4)} per run (~${(features.twitterMaxPages||3)*20} tweets). Budget: $${twitterBudget}/mo.${apiKeys.twitter ? "" : " — No key set."}` },
+            { id:"sentiment",      label:"AI sentiment analysis", desc:"Use LLM to refine sentiment scoring. Disable to use fast keyword-only mode." },
           ].map(f => (
             <div key={f.id} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"14px 18px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
               <div>
@@ -1705,13 +1826,23 @@ export default function App() {
   }, []);
 
   const handleRun = useCallback(async (company) => {
-    if (!settings.apiKeys.newsapi && !settings.apiKeys.yutori && !settings.apiKeys.data365) {
-      toast("Add an API key in Admin → API Keys to run searches", "error"); return;
+    const { apiKeys, features } = settings;
+    const hasNews    = features.newsEnabled !== false && !!apiKeys.newsapi;
+    const hasTwitter = !!(features.twitterEnabled && apiKeys.twitter);
+    const hasLegacy  = !!(apiKeys.yutori || apiKeys.data365);
+    if (!hasNews && !hasTwitter && !hasLegacy) {
+      toast("Configure API keys in Admin → API Keys to run searches", "error"); return;
     }
     try {
-      const result = await runCompany(company, { ...settings, outlets }, msg => {});
+      const result = await runCompany(company, { ...settings, outlets }, () => {});
       const updatedRuns = [result, ...(company.runs || [])].slice(0, 3);
       updateCompany({ ...company, runs: updatedRuns });
+      // Track Twitter spend
+      if (result.twitterCost > 0) {
+        const monthKey = new Date().toISOString().slice(0, 7);
+        const prev = settings.twitterSpend || {};
+        updateSettings({ ...settings, twitterSpend: { ...prev, [monthKey]: (prev[monthKey] || 0) + result.twitterCost } });
+      }
     } catch (e) { toast("Run failed: " + e.message, "error"); }
   }, [settings, outlets, updateCompany, toast]);
 
@@ -1770,6 +1901,7 @@ export default function App() {
             onBack={() => setSelectedCompany(null)}
             onRun={handleRun}
             onUpdate={updateCompany}
+            onUpdateSettings={updateSettings}
             toast={toast}
           />
         ) : view === "portfolio" ? (

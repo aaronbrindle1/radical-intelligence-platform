@@ -372,6 +372,89 @@ export async function yutoriResearch(company, dateRangeId, yutoriKey, onProgress
   return { social: [], media: [] };
 }
 
+// ── TwitterAPI.io integration ─────────────────────────────────────────────────
+
+export const TWITTER_COST_PER_TWEET = 0.00015; // $0.15 per 1000 tweets
+
+// Convert our NewsAPI boolean query format to Twitter Advanced Search syntax.
+// Key differences: NOT "phrase" → -"phrase", NOT word → -word
+function booleanToTwitterQuery(query) {
+  if (!query) return "";
+  return query
+    .replace(/\bNOT\s+"([^"]+)"/gi, (_, p) => `-"${p}"`)
+    .replace(/\bNOT\s+([^\s")]+)/gi, (_, p) => `-${p}`)
+    .trim();
+}
+
+export async function fetchTwitter(company, fromDate, twitterKey, maxPages = 3, budgetRemainingUSD = Infinity) {
+  if (!twitterKey) return { results: [], pagesUsed: 0, estimatedCost: 0 };
+
+  const baseQuery = booleanToTwitterQuery(company.boolean_query || `"${company.name}"`);
+  // Twitter date filter in query string: since:YYYY-MM-DD
+  const fullQuery = `${baseQuery} since:${fromDate} -is:retweet`;
+
+  const results = [];
+  let cursor = null;
+  let pagesUsed = 0;
+  let estimatedCost = 0;
+
+  for (let page = 0; page < maxPages; page++) {
+    // Stop if we'd exceed the budget
+    if (estimatedCost + (20 * TWITTER_COST_PER_TWEET) > budgetRemainingUSD) {
+      console.log(`[twitter] Budget cap reached at page ${page}`);
+      break;
+    }
+    try {
+      const params = new URLSearchParams({ query: fullQuery, queryType: "Latest" });
+      if (cursor) params.set("cursor", cursor);
+
+      const r = await fetch(
+        `http://localhost:3001/twitter/twitter/tweet/advanced_search?${params}`,
+        { headers: { "x-twitter-key": twitterKey } }
+      );
+      if (!r.ok) { console.warn("[twitter] HTTP", r.status); break; }
+      const d = await r.json();
+      const tweets = Array.isArray(d.tweets) ? d.tweets : [];
+      pagesUsed++;
+      estimatedCost += tweets.length * TWITTER_COST_PER_TWEET;
+
+      tweets.forEach(t => {
+        const text = t.text || "";
+        results.push({
+          id: `tw-${company.id}-${t.id || Date.now()}`,
+          platform: "twitter",
+          author: `@${t.author?.username || "unknown"}`,
+          text,
+          url: t.url || `https://x.com/i/web/status/${t.id}`,
+          likes: t.likeCount || 0,
+          comments: t.replyCount || 0,
+          retweets: t.retweetCount || 0,
+          views: t.viewCount || 0,
+          date: t.createdAt ? t.createdAt.slice(0, 10) : "",
+          sentiment: quickSentiment("", text),
+          isVerified: t.author?.isVerified || false,
+          followerCount: t.author?.followers || 0,
+          isLive: true,
+          source: "TwitterAPI.io",
+        });
+      });
+
+      if (!d.has_next_page || !d.next_cursor || tweets.length === 0) break;
+      cursor = d.next_cursor;
+    } catch (e) {
+      console.warn("[twitter] Fetch error:", e.message);
+      break;
+    }
+  }
+
+  // De-dupe by id
+  const seen = new Set();
+  const unique = results.filter(r => { if (seen.has(r.id)) return false; seen.add(r.id); return true; });
+
+  console.log(`[twitter] ${company.name}: ${unique.length} tweets, ${pagesUsed} pages, ~$${estimatedCost.toFixed(4)}`);
+  return { results: unique, pagesUsed, estimatedCost };
+}
+
 // ── Data365 Reddit fallback ───────────────────────────────────────────────────
 
 export async function fetchData365(query, data365Key) {
@@ -398,16 +481,20 @@ export async function fetchData365(query, data365Key) {
 // ── Main company run ──────────────────────────────────────────────────────────
 
 export async function runCompany(company, settings, onProgress) {
-  const { apiKeys, features, dateRange } = settings;
+  const { apiKeys, features, dateRange, twitterSpend } = settings;
   const range = DATE_RANGES.find(r => r.id === dateRange) || DATE_RANGES[2];
   const fromDate = dateRangeFrom(range.days);
   const query = company.boolean_query || `"${company.name}"`;
 
+  const newsEnabled   = features.newsEnabled !== false;   // default on
+  const twitterEnabled = !!(features.twitterEnabled && apiKeys.twitter);
+
   let mediaResults = [];
   let socialResults = [];
+  let twitterCost = 0;
 
   // 1 ── News (NewsAPI)
-  if (apiKeys.newsapi) {
+  if (newsEnabled && apiKeys.newsapi) {
     onProgress("Fetching news…");
     try {
       mediaResults = await fetchNews(company, fromDate, apiKeys.newsapi, settings.outlets || []);
@@ -415,30 +502,42 @@ export async function runCompany(company, settings, onProgress) {
     } catch (e) { console.warn("[run] News failed:", e.message); }
   }
 
-  // 2 ── Social
-  if (features.social) {
-    if (apiKeys.yutori) {
-      // 2a — Scout (instant, cached)
+  // 2 ── Twitter (TwitterAPI.io) — primary social source
+  if (twitterEnabled) {
+    onProgress("Fetching Twitter/X mentions…");
+    try {
+      const monthKey = new Date().toISOString().slice(0, 7); // "YYYY-MM"
+      const spentThisMonth = (twitterSpend || {})[monthKey] || 0;
+      const budgetMonthly = features.twitterBudgetMonthly || 10;
+      const budgetRemaining = Math.max(0, budgetMonthly - spentThisMonth);
+      const maxPages = features.twitterMaxPages || 3;
+
+      const { results, estimatedCost } = await fetchTwitter(
+        company, fromDate, apiKeys.twitter, maxPages, budgetRemaining
+      );
+      socialResults = results;
+      twitterCost = estimatedCost;
+      console.log(`[run] ${company.name} twitter: ${results.length} tweets, ~$${estimatedCost.toFixed(4)}`);
+    } catch (e) { console.warn("[run] Twitter failed:", e.message); }
+  }
+
+  // 3 ── Legacy social fallbacks (Yutori/Data365) when Twitter not configured
+  if (!twitterEnabled) {
+    if (features.social !== false && apiKeys.yutori) {
       onProgress("Fetching Yutori Scout…");
       try {
         const scout = await yutoriScout(company, apiKeys.yutori);
         socialResults = [...scout];
-        console.log(`[run] ${company.name} scout: ${scout.length} results`);
-      } catch (e) { console.warn("[run] Scout failed:", e.message); }
-
-      // 2b — Research (deep, optional)
-      if (features.yutoriResearch) {
-        onProgress("Running deep search (Yutori Research)…");
-        try {
+        if (features.yutoriResearch) {
+          onProgress("Running deep search (Yutori Research)…");
           const { social, media } = await yutoriResearch(company, dateRange, apiKeys.yutori, onProgress);
           const socialUrls = new Set(socialResults.map(s => s.url));
           socialResults = [...socialResults, ...social.filter(s => !socialUrls.has(s.url))];
           const mediaUrls = new Set(mediaResults.map(m => m.url));
           mediaResults = [...mediaResults, ...media.filter(m => !mediaUrls.has(m.url))];
-          console.log(`[run] ${company.name} research: +${social.length} social, +${media.length} media`);
-        } catch (e) { console.warn("[run] Research failed:", e.message); }
-      }
-    } else if (apiKeys.data365) {
+        }
+      } catch (e) { console.warn("[run] Yutori failed:", e.message); }
+    } else if (features.social !== false && apiKeys.data365) {
       onProgress("Fetching Reddit (Data365)…");
       try {
         socialResults = await fetchData365(query, apiKeys.data365);
@@ -502,6 +601,7 @@ export async function runCompany(company, settings, onProgress) {
     sentimentScore,
     keyDrivers,
     businessSignals,
+    twitterCost,
     isLive: mediaResults.length > 0 || socialResults.length > 0,
   };
 }
