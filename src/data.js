@@ -74,7 +74,6 @@ export const BOOLEAN_QUERIES = {
   "Decart":              `"Decart" AND ("AI" OR "training" OR "serving" OR "inference" OR "decart.ai")`,
   "Etched":              `"Etched" AND ("AI" OR "ASIC" OR "transformer" OR "silicon" OR "chip" OR "etched.com")`,
   "Prime Intellect":     `("Prime Intellect" OR "primeintellect.ai" OR "INTELLECT-1" OR "INTELLECT-2" OR "INTELLECT-3") AND ("AI" OR "compute" OR "training" OR "reinforcement learning" OR "post-training" OR "distributed" OR "agentic" OR "GPU")`,
-  "Mantic":              `"Mantic" AND ("AI" OR "prediction" OR "forecasting" OR "market" OR "mantic.markets") NOT "mantic ore" NOT "mantis"`,
   "Radical Ventures":    `("Radical Ventures" OR "radical.vc") AND ("AI" OR "venture" OR "fund" OR "investment" OR "portfolio" OR "startup" OR "founder") NOT "radical change" NOT "radical left" NOT "radical right" NOT "radical idea"`,
 };
 
@@ -129,7 +128,6 @@ const RAW_PORTFOLIO = [
   { id:48, name:"Etched",           categories:["Semiconductors"],                   year:2024, description:"Semiconductor company building specialized ASICs designed specifically for transformer-based models.", website:"etched.com",         competitors_seed:["NVIDIA","Cerebras","SambaNova"] },
   { id:49, name:"Cinder",           categories:["Software","Security"],              year:2024, description:"Trust and safety platform using AI to manage content moderation and policy enforcement at scale.", website:"cinder.ai",          competitors_seed:["ActiveFence","Unitary","Spectrum Labs"] },
   { id:50, name:"Prime Intellect",  categories:["Infrastructure","Software"],        year:2024, description:"Compute and infrastructure platform for RL-based post-training — enables teams to train, evaluate and deploy custom agentic models at scale using distributed GPU clusters.", website:"primeintellect.ai",  competitors_seed:["Together AI","Anyscale","Modal","Lambda Labs","Scale AI"] },
-  { id:51, name:"Mantic",           categories:["Software"],                         year:2024, description:"AI-powered prediction market platform using collective intelligence and forecasting to generate accurate probabilistic predictions.", website:"mantic.markets",     competitors_seed:["Metaculus","Manifold Markets","Kalshi","Polymarket"] },
   { id:99, name:"Radical Ventures", categories:["VC"], isFirm:true,                  year:2017, description:"AI-focused venture capital fund backing the world's most ambitious AI founders from seed to growth.", website:"radical.vc",           competitors_seed:["Sequoia Capital","a16z","Khosla Ventures","General Catalyst","Coatue"] },
 ];
 
