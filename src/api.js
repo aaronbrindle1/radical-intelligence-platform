@@ -592,7 +592,21 @@ export async function runCompany(company, settings, onProgress) {
     if (a.tier !== b.tier) return (a.tier || 3) - (b.tier || 3);
     return (b.date || "").localeCompare(a.date || "");
   });
-  socialResults.sort((a, b) => (b.likes + b.comments * 2) - (a.likes + a.comments * 2));
+  // Engagement value score — weighted by signal strength
+  // Retweets > replies > likes > views; verified/high-follower authors get a boost
+  const engagementScore = s => {
+    const base =
+      (s.likes    || 0) * 1 +
+      (s.retweets || 0) * 3 +   // retweets = strongest endorsement signal
+      (s.comments || 0) * 2 +   // replies indicate real discussion
+      (s.views    || 0) * 0.005; // views at low weight (high raw numbers)
+    const followerBoost = Math.log10(Math.max(s.followerCount || 1, 10)) * 8;
+    const verifiedBoost = s.isVerified ? 40 : 0;
+    return base + followerBoost + verifiedBoost;
+  };
+  socialResults.sort((a, b) => engagementScore(b) - engagementScore(a));
+  // Stamp the score onto each result for display
+  socialResults = socialResults.map(s => ({ ...s, engagementScore: Math.round(engagementScore(s)) }));
 
   return {
     ranAt: new Date().toISOString(),

@@ -205,22 +205,42 @@ function ArticleCard({ item }) {
 
 function SocialCard({ item }) {
   const p = PLAT[item.platform] || PLAT.web;
+  const isTwitter = item.platform === "twitter";
+  const hasEngagement = item.likes > 0 || item.retweets > 0 || item.comments > 0 || item.views > 0;
   return (
-    <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"12px 14px", display:"flex", flexDirection:"column", gap:6 }}>
-      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-        <span style={{ fontSize:12, fontWeight:800, color:p.color, width:20, textAlign:"center" }}>{p.icon}</span>
-        <span style={{ fontSize:11, fontWeight:600, color:T.dim }}>{item.author}</span>
-        {item.subreddit && <span style={{ fontSize:10, color:T.faint }}>{item.subreddit}</span>}
-        <span style={{ fontSize:10, color:T.faint, marginLeft:"auto" }}>{item.date}</span>
-        <Pip score={item.sentiment || 0} />
+    <a href={item.url || "#"} target="_blank" rel="noopener noreferrer" style={{ textDecoration:"none", display:"block" }}>
+      <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"12px 14px", display:"flex", flexDirection:"column", gap:6, transition:"border-color 0.15s", cursor:"pointer" }}
+        onMouseEnter={e => e.currentTarget.style.borderColor = p.color + "60"}
+        onMouseLeave={e => e.currentTarget.style.borderColor = T.border}>
+        {/* Header row */}
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <span style={{ fontSize:12, fontWeight:800, color:p.color, width:20, textAlign:"center" }}>{p.icon}</span>
+          <span style={{ fontSize:11, fontWeight:600, color:T.dim }}>{item.author}</span>
+          {item.isVerified && <span title="Verified" style={{ fontSize:10, color:"#60a5fa" }}>✓</span>}
+          {item.followerCount > 0 && <span style={{ fontSize:10, color:T.faint }}>{fmt(item.followerCount)} followers</span>}
+          {item.subreddit && <span style={{ fontSize:10, color:T.faint }}>{item.subreddit}</span>}
+          <span style={{ fontSize:10, color:T.faint, marginLeft:"auto" }}>{item.date}</span>
+          <Pip score={item.sentiment || 0} />
+        </div>
+        {/* Tweet text */}
+        <p style={{ fontSize:12, color:T.text, margin:0, lineHeight:1.5 }}>{(item.text || "").slice(0, 280)}{(item.text || "").length > 280 ? "…" : ""}</p>
+        {/* Engagement metrics */}
+        {hasEngagement && (
+          <div style={{ display:"flex", gap:14, alignItems:"center", paddingTop:2 }}>
+            {item.likes    > 0 && <span style={{ fontSize:10, color:T.faint }}>♥ {fmt(item.likes)}</span>}
+            {item.retweets > 0 && <span style={{ fontSize:10, color:T.faint }}>↺ {fmt(item.retweets)}</span>}
+            {item.comments > 0 && <span style={{ fontSize:10, color:T.faint }}>💬 {fmt(item.comments)}</span>}
+            {item.views    > 0 && <span style={{ fontSize:10, color:T.faint }}>👁 {fmt(item.views)}</span>}
+            {item.engagementScore > 0 && (
+              <span style={{ marginLeft:"auto", fontSize:10, fontWeight:700, color: item.engagementScore > 200 ? "#fbbf24" : item.engagementScore > 50 ? T.accent : T.faint }}
+                title="Engagement value score (likes + retweets×3 + replies×2 + views + follower/verified boost)">
+                ⚡ {fmt(item.engagementScore)}
+              </span>
+            )}
+          </div>
+        )}
       </div>
-      <p style={{ fontSize:12, color:T.text, margin:0, lineHeight:1.5 }}>{(item.text || "").slice(0, 240)}{(item.text || "").length > 240 ? "…" : ""}</p>
-      <div style={{ display:"flex", gap:12, alignItems:"center" }}>
-        {item.likes > 0 && <span style={{ fontSize:10, color:T.faint }}>▲ {fmt(item.likes)}</span>}
-        {item.comments > 0 && <span style={{ fontSize:10, color:T.faint }}>💬 {fmt(item.comments)}</span>}
-        {item.url && <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ fontSize:10, color:T.accent, marginLeft:"auto", textDecoration:"none" }}>Open ↗</a>}
-      </div>
-    </div>
+    </a>
   );
 }
 
