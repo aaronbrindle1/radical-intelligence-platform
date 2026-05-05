@@ -19,11 +19,15 @@ function loadState() {
       if (newEntries.length > 0) {
         saved.companies = [...saved.companies, ...newEntries];
       }
-      // Patch isFirm flag on existing entries (won't be present in old saved state)
+      // Patch fields from canonical that won't be in old saved state
       saved.companies = saved.companies.map(c => {
         const canon = canonicalMap[c.id];
-        if (canon?.isFirm && !c.isFirm) return { ...c, isFirm: true };
-        return c;
+        if (!canon) return c;
+        const patches = {};
+        if (canon.isFirm && !c.isFirm) patches.isFirm = true;
+        if (canon.twitter_handle !== undefined && c.twitter_handle === undefined) patches.twitter_handle = canon.twitter_handle;
+        if (canon.twitter_accounts !== undefined && c.twitter_accounts === undefined) patches.twitter_accounts = canon.twitter_accounts;
+        return Object.keys(patches).length ? { ...c, ...patches } : c;
       });
       return migrateSettings(saved);
     }

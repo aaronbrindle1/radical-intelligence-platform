@@ -390,8 +390,18 @@ export async function fetchTwitter(company, fromDate, twitterKey, maxPages = 3, 
   if (!twitterKey) return { results: [], pagesUsed: 0, estimatedCost: 0 };
 
   const baseQuery = booleanToTwitterQuery(company.boolean_query || `"${company.name}"`);
-  // Twitter date filter in query string: since:YYYY-MM-DD
-  const fullQuery = `${baseQuery} since:${fromDate} -is:retweet`;
+
+  // Build from: clauses for the company handle + relevant accounts
+  const allHandles = [
+    ...(company.twitter_handle ? [company.twitter_handle] : []),
+    ...(company.twitter_accounts || []),
+  ].map(h => h.replace(/^@/, "")).filter(Boolean);
+  const fromClause = allHandles.length
+    ? ` OR (${allHandles.map(h => `from:${h}`).join(" OR ")})`
+    : "";
+
+  // Combined: keyword mentions OR posts from tracked handles, since date, no retweets
+  const fullQuery = `(${baseQuery}${fromClause}) since:${fromDate} -is:retweet`;
 
   const results = [];
   let cursor = null;
