@@ -13,11 +13,18 @@ function loadState() {
       const saved = JSON.parse(raw);
       // Merge any new companies from RAW_PORTFOLIO that aren't in saved state
       const canonical = buildInitialCompanies();
+      const canonicalMap = Object.fromEntries(canonical.map(c => [c.id, c]));
       const savedIds = new Set(saved.companies.map(c => c.id));
       const newEntries = canonical.filter(c => !savedIds.has(c.id));
       if (newEntries.length > 0) {
         saved.companies = [...saved.companies, ...newEntries];
       }
+      // Patch isFirm flag on existing entries (won't be present in old saved state)
+      saved.companies = saved.companies.map(c => {
+        const canon = canonicalMap[c.id];
+        if (canon?.isFirm && !c.isFirm) return { ...c, isFirm: true };
+        return c;
+      });
       return saved;
     }
   } catch {}
