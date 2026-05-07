@@ -27,6 +27,15 @@ function loadState() {
         if (canon.isFirm && !c.isFirm) patches.isFirm = true;
         if (canon.twitter_handle !== undefined && c.twitter_handle === undefined) patches.twitter_handle = canon.twitter_handle;
         if (canon.twitter_accounts !== undefined && c.twitter_accounts === undefined) patches.twitter_accounts = canon.twitter_accounts;
+        // Merge competitors: add any new canon entries, but preserve user-added ones
+        if (canon.competitors?.length) {
+          const savedComps = c.competitors || [];
+          const savedNames = new Set(savedComps.map(x => x.name));
+          const newFromCanon = canon.competitors.filter(x => !savedNames.has(x.name));
+          if (newFromCanon.length > 0) {
+            patches.competitors = [...savedComps, ...newFromCanon];
+          }
+        }
         return Object.keys(patches).length ? { ...c, ...patches } : c;
       });
       return migrateSettings(saved);
@@ -68,6 +77,8 @@ function loadState() {
       apiKeys: { newsapi:"", twitter:"", yutori:"", data365:"", gemini:"", anthropic:"", cohere:"", cohere_north_key:"", cohere_north_hostname:"radical.cloud.cohere.com", cohere_north_model:"command-r-plus", vertex_enabled:true },
       features: { newsEnabled:true, twitterEnabled:false, twitterMaxPages:3, twitterBudgetMonthly:10, sentiment:true, social:true, yutoriResearch:true },
       twitterSpend: {},
+      twitterCreditBalance: 20,
+      twitterRunLog: [],
       dateRange: "30d",
     },
   };
@@ -83,7 +94,7 @@ function migrateSettings(state) {
   if (f.sentiment === undefined)           f.sentiment = true;
   const apiKeys = { ...s.apiKeys };
   if (apiKeys.twitter === undefined) apiKeys.twitter = "";
-  return { ...state, settings: { ...s, apiKeys, features: f, twitterSpend: s.twitterSpend || {} } };
+  return { ...state, sandboxCompanies: state.sandboxCompanies || [], settings: { ...s, apiKeys, features: f, twitterSpend: s.twitterSpend || {}, twitterCreditBalance: s.twitterCreditBalance ?? 20, twitterRunLog: s.twitterRunLog || [] } };
 }
 
 function saveState(state) {
@@ -109,6 +120,9 @@ const ago = d => { if (!d) return "never"; const dy = Math.floor((Date.now() - n
 const CAT_COLOR = { LLMs:"#7c3aed", Software:"#3b82f6", Healthcare:"#10b981", Biotechnology:"#ec4899", Climate:"#06b6d4", Materials:"#f59e0b", Space:"#8b5cf6", Semiconductors:"#f97316", Data:"#14b8a6", Infrastructure:"#64748b", "Financial Services":"#22c55e", Robotics:"#e11d48", Search:"#0ea5e9", Construction:"#a3e635", Transportation:"#fb923c", Security:"#f43f5e" };
 
 const PLAT = { twitter:{ color:"#1d9bf0", icon:"𝕏" }, reddit:{ color:"#ff4500", icon:"◉" }, linkedin:{ color:"#0a66c2", icon:"in" }, hackernews:{ color:"#ff6000", icon:"Y" }, web:{ color:"#818cf8", icon:"◈" } };
+
+// Distinct colors for competitive SOV — index 0 is always the focal company (accent)
+const SOV_PALETTE = ["#818cf8","#34d399","#f59e0b","#f87171","#60a5fa","#a78bfa","#4ade80","#fb923c","#38bdf8","#e879f9","#facc15","#2dd4bf"];
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 
@@ -158,8 +172,8 @@ const Btn = ({ children, onClick, variant="ghost", disabled, style={} }) => {
   return <button onClick={disabled ? undefined : onClick} style={{ ...base, ...styles[variant] }}>{children}</button>;
 };
 
-const Input = ({ value, onChange, placeholder, style={} }) => (
-  <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+const Input = ({ value, onChange, placeholder, style={}, onKeyDown }) => (
+  <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} onKeyDown={onKeyDown}
     style={{ background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"7px 11px", fontSize:12, color:T.text, outline:"none", width:"100%", fontFamily:"inherit", ...style }}
   />
 );
@@ -207,37 +221,41 @@ function ArticleCard({ item }) {
 
 // ── Social Card ───────────────────────────────────────────────────────────────
 
-function SocialCard({ item }) {
+function SocialCard({ item, highlight }) {
   const p = PLAT[item.platform] || PLAT.web;
-  const isTwitter = item.platform === "twitter";
   const hasEngagement = item.likes > 0 || item.retweets > 0 || item.comments > 0 || item.views > 0;
+  const url = item.url || "#";
   return (
-    <a href={item.url || "#"} target="_blank" rel="noopener noreferrer" style={{ textDecoration:"none", display:"block" }}>
-      <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"12px 14px", display:"flex", flexDirection:"column", gap:6, transition:"border-color 0.15s", cursor:"pointer" }}
-        onMouseEnter={e => e.currentTarget.style.borderColor = p.color + "60"}
-        onMouseLeave={e => e.currentTarget.style.borderColor = T.border}>
+    <a href={url} target="_blank" rel="noopener noreferrer" style={{ textDecoration:"none", display:"block" }}>
+      <div style={{ background: highlight ? `${p.color}10` : T.card,
+        border:`1px solid ${highlight ? p.color+"50" : T.border}`,
+        borderRadius:10, padding:"12px 14px", display:"flex", flexDirection:"column", gap:6,
+        transition:"border-color 0.15s, box-shadow 0.15s", cursor:"pointer" }}
+        onMouseEnter={e => { e.currentTarget.style.borderColor = p.color+"80"; e.currentTarget.style.boxShadow = `0 0 0 1px ${p.color}30`; }}
+        onMouseLeave={e => { e.currentTarget.style.borderColor = highlight ? p.color+"50" : T.border; e.currentTarget.style.boxShadow = "none"; }}>
         {/* Header row */}
-        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-          <span style={{ fontSize:12, fontWeight:800, color:p.color, width:20, textAlign:"center" }}>{p.icon}</span>
-          <span style={{ fontSize:11, fontWeight:600, color:T.dim }}>{item.author}</span>
-          {item.isVerified && <span title="Verified" style={{ fontSize:10, color:"#60a5fa" }}>✓</span>}
-          {item.followerCount > 0 && <span style={{ fontSize:10, color:T.faint }}>{fmt(item.followerCount)} followers</span>}
+        <div style={{ display:"flex", alignItems:"center", gap:7, flexWrap:"wrap" }}>
+          <span style={{ fontSize:12, fontWeight:800, color:p.color, width:18, textAlign:"center", flexShrink:0 }}>{p.icon}</span>
+          <span style={{ fontSize:11, fontWeight:700, color:T.text }}>{item.author}</span>
+          {item.isVerified && <span title="Verified account" style={{ fontSize:10, background:"#3b82f620", color:"#60a5fa", borderRadius:4, padding:"0 4px" }}>✓ Verified</span>}
+          {item.followerCount > 1000 && <span style={{ fontSize:10, color:T.faint }}>{fmt(item.followerCount)} followers</span>}
           {item.subreddit && <span style={{ fontSize:10, color:T.faint }}>{item.subreddit}</span>}
           <span style={{ fontSize:10, color:T.faint, marginLeft:"auto" }}>{item.date}</span>
           <Pip score={item.sentiment || 0} />
         </div>
-        {/* Tweet text */}
-        <p style={{ fontSize:12, color:T.text, margin:0, lineHeight:1.5 }}>{(item.text || "").slice(0, 280)}{(item.text || "").length > 280 ? "…" : ""}</p>
-        {/* Engagement metrics */}
+        {/* Post text */}
+        <p style={{ fontSize:12, color:T.text, margin:0, lineHeight:1.6 }}>{(item.text || "").slice(0, 300)}{(item.text||"").length > 300 ? "…" : ""}</p>
+        {/* Engagement row */}
         {hasEngagement && (
-          <div style={{ display:"flex", gap:14, alignItems:"center", paddingTop:2 }}>
+          <div style={{ display:"flex", gap:12, alignItems:"center", paddingTop:2, borderTop:`1px solid ${T.border}`, marginTop:2 }}>
             {item.likes    > 0 && <span style={{ fontSize:10, color:T.faint }}>♥ {fmt(item.likes)}</span>}
             {item.retweets > 0 && <span style={{ fontSize:10, color:T.faint }}>↺ {fmt(item.retweets)}</span>}
             {item.comments > 0 && <span style={{ fontSize:10, color:T.faint }}>💬 {fmt(item.comments)}</span>}
             {item.views    > 0 && <span style={{ fontSize:10, color:T.faint }}>👁 {fmt(item.views)}</span>}
             {item.engagementScore > 0 && (
-              <span style={{ marginLeft:"auto", fontSize:10, fontWeight:700, color: item.engagementScore > 200 ? "#fbbf24" : item.engagementScore > 50 ? T.accent : T.faint }}
-                title="Engagement value score (likes + retweets×3 + replies×2 + views + follower/verified boost)">
+              <span style={{ marginLeft:"auto", fontSize:10, fontWeight:700,
+                color: item.engagementScore > 500 ? "#fbbf24" : item.engagementScore > 100 ? T.accent : T.faint }}
+                title="Engagement score: likes + retweets×3 + replies×2 + views×0.005 + follower/verified boost">
                 ⚡ {fmt(item.engagementScore)}
               </span>
             )}
@@ -245,6 +263,150 @@ function SocialCard({ item }) {
         )}
       </div>
     </a>
+  );
+}
+
+// ── Social Insights Panel ─────────────────────────────────────────────────────
+
+const SOCIAL_THEMES = [
+  { label:"Funding / Investment",    keywords:["fund","raise","invest","capital","series","round","million","billion","valuation","backed","vc"] },
+  { label:"Product / Launch",        keywords:["launch","release","ship","new feature","announce","product","update","v2","beta","available"] },
+  { label:"Research / Models",       keywords:["research","paper","model","benchmark","sota","llm","training","dataset","open-source","weights"] },
+  { label:"Hiring / Team",           keywords:["hire","hiring","join","team","career","job","talent","we're growing","open role","position"] },
+  { label:"Partnerships / Deals",    keywords:["partner","collaboration","integrat","deal","agreement","work with","join force","strategic"] },
+  { label:"Industry Recognition",    keywords:["award","congrat","well deserved","leader","top company","best","ranked","named","recognized"] },
+  { label:"Criticism / Risk",        keywords:["concern","risk","problem","fail","issue","lawsuit","regulat","critic","wrong","bad","dangerous","mislead"] },
+  { label:"Customer / Use Case",     keywords:["customer","client","user","use case","success story","case study","deploy","production","enterprise"] },
+];
+
+function SocialInsights({ posts }) {
+  const [expanded, setExpanded] = useState(true);
+  if (!posts || posts.length < 3) return null;
+
+  // Top engagement post
+  const topEngagement = [...posts].sort((a, b) => (b.engagementScore||0) - (a.engagementScore||0))[0];
+
+  // Largest audience (highest follower count)
+  const byFollowers = [...posts].sort((a, b) => (b.followerCount||0) - (a.followerCount||0));
+  const largestAudience = byFollowers[0]?.followerCount > 0 ? byFollowers[0] : null;
+
+  // Notable handles — dedupe authors, rank by followers then engagement
+  const authorMap = {};
+  posts.forEach(p => {
+    const key = p.author;
+    if (!authorMap[key]) authorMap[key] = { author:key, followers:p.followerCount||0, isVerified:p.isVerified||false, postCount:0, totalEng:0, url:p.url };
+    authorMap[key].postCount++;
+    authorMap[key].totalEng += p.engagementScore || 0;
+    if ((p.followerCount||0) > authorMap[key].followers) authorMap[key].followers = p.followerCount;
+    if (p.isVerified) authorMap[key].isVerified = true;
+  });
+  const notableHandles = Object.values(authorMap)
+    .filter(a => a.followers > 5000 || a.isVerified || a.postCount > 1)
+    .sort((a, b) => (b.isVerified - a.isVerified) || (b.followers - a.followers) || (b.totalEng - a.totalEng))
+    .slice(0, 10);
+
+  // Theme detection
+  const themeCounts = {};
+  posts.forEach(p => {
+    const text = (p.text || "").toLowerCase();
+    SOCIAL_THEMES.forEach(({ label, keywords }) => {
+      if (keywords.some(k => text.includes(k))) themeCounts[label] = (themeCounts[label]||0) + 1;
+    });
+  });
+  const themes = Object.entries(themeCounts).sort((a,b) => b[1]-a[1]).slice(0, 6);
+  const maxThemeCount = themes[0]?.[1] || 1;
+
+  const MiniPostCard = ({ post, badge }) => {
+    const pl = PLAT[post.platform] || PLAT.web;
+    return (
+      <a href={post.url||"#"} target="_blank" rel="noopener noreferrer" style={{ textDecoration:"none" }}>
+        <div style={{ background:"rgba(0,0,0,0.2)", border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 12px", cursor:"pointer", transition:"border-color 0.15s" }}
+          onMouseEnter={e => e.currentTarget.style.borderColor = pl.color+"60"}
+          onMouseLeave={e => e.currentTarget.style.borderColor = T.border}>
+          <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6 }}>
+            <span style={{ fontSize:10, padding:"1px 6px", borderRadius:10, background:`${pl.color}25`, color:pl.color, fontWeight:700, fontSize:10 }}>{badge}</span>
+            <span style={{ fontSize:11, fontWeight:700, color:T.text }}>{post.author}</span>
+            {post.isVerified && <span style={{ fontSize:9, color:"#60a5fa" }}>✓</span>}
+            {post.followerCount > 0 && <span style={{ fontSize:10, color:T.faint, marginLeft:"auto" }}>{fmt(post.followerCount)} followers</span>}
+          </div>
+          <p style={{ fontSize:11, color:T.dim, margin:0, lineHeight:1.5 }}>{(post.text||"").slice(0,160)}{(post.text||"").length>160?"…":""}</p>
+          <div style={{ display:"flex", gap:10, marginTop:6 }}>
+            {post.likes>0    && <span style={{ fontSize:10, color:T.faint }}>♥ {fmt(post.likes)}</span>}
+            {post.retweets>0 && <span style={{ fontSize:10, color:T.faint }}>↺ {fmt(post.retweets)}</span>}
+            {post.views>0    && <span style={{ fontSize:10, color:T.faint }}>👁 {fmt(post.views)}</span>}
+            {post.engagementScore>0 && <span style={{ marginLeft:"auto", fontSize:10, fontWeight:700, color:"#fbbf24" }}>⚡ {fmt(post.engagementScore)}</span>}
+          </div>
+        </div>
+      </a>
+    );
+  };
+
+  return (
+    <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, marginBottom:16, overflow:"hidden" }}>
+      {/* Header */}
+      <div onClick={() => setExpanded(e => !e)}
+        style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 16px", cursor:"pointer", borderBottom: expanded ? `1px solid ${T.border}` : "none" }}>
+        <div style={{ fontSize:12, fontWeight:700, color:T.text }}>
+          📊 Social Intelligence
+          <span style={{ fontSize:11, color:T.dim, fontWeight:400, marginLeft:8 }}>{posts.length} posts analysed</span>
+        </div>
+        <span style={{ fontSize:12, color:T.faint }}>{expanded ? "▲" : "▼"}</span>
+      </div>
+
+      {expanded && (
+        <div style={{ padding:"14px 16px", display:"flex", flexDirection:"column", gap:16 }}>
+
+          {/* Top posts row */}
+          <div style={{ display:"grid", gridTemplateColumns: largestAudience && largestAudience.author !== topEngagement.author ? "1fr 1fr" : "1fr", gap:10 }}>
+            <MiniPostCard post={topEngagement} badge="⚡ Top engagement" />
+            {largestAudience && largestAudience.author !== topEngagement.author && (
+              <MiniPostCard post={largestAudience} badge="👥 Largest audience" />
+            )}
+          </div>
+
+          {/* Notable handles */}
+          {notableHandles.length > 0 && (
+            <div>
+              <div style={{ fontSize:11, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:8 }}>Notable handles engaged</div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {notableHandles.map(a => (
+                  <a key={a.author} href={`https://x.com/${a.author.replace(/^@/,"")}`} target="_blank" rel="noopener noreferrer" style={{ textDecoration:"none" }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 10px", borderRadius:20, background:"rgba(29,155,240,0.1)", border:"1px solid rgba(29,155,240,0.2)", cursor:"pointer" }}
+                      onMouseEnter={e => e.currentTarget.style.borderColor = "rgba(29,155,240,0.5)"}
+                      onMouseLeave={e => e.currentTarget.style.borderColor = "rgba(29,155,240,0.2)"}>
+                      <span style={{ fontSize:11, fontWeight:700, color:"#1d9bf0" }}>{a.author}</span>
+                      {a.isVerified && <span style={{ fontSize:9, color:"#60a5fa" }}>✓</span>}
+                      {a.followers > 0 && <span style={{ fontSize:10, color:T.faint }}>{fmt(a.followers)}</span>}
+                      {a.postCount > 1 && <span style={{ fontSize:10, color:T.dim }}>{a.postCount} posts</span>}
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Theme breakdown */}
+          {themes.length > 0 && (
+            <div>
+              <div style={{ fontSize:11, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:8 }}>Conversation themes</div>
+              <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+                {themes.map(([label, count]) => (
+                  <div key={label} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <span style={{ fontSize:11, color:T.text, width:180, flexShrink:0 }}>{label}</span>
+                    <div style={{ flex:1, height:5, borderRadius:3, background:T.ghost, overflow:"hidden" }}>
+                      <div style={{ height:"100%", width:`${(count/maxThemeCount)*100}%`, background:T.accent, borderRadius:3, transition:"width 0.4s" }} />
+                    </div>
+                    <span style={{ fontSize:11, color:T.dim, width:28, textAlign:"right", flexShrink:0 }}>{count}</span>
+                    <span style={{ fontSize:10, color:T.faint, width:38, flexShrink:0 }}>{Math.round((count/posts.length)*100)}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -402,13 +564,15 @@ function PortfolioHealth({ companies }) {
             <span style={{ fontSize:30, fontWeight:900, color:sentColor, letterSpacing:"-0.04em" }}>{avgSent >= 0 ? "+" : ""}{avgSent.toFixed(2)}</span>
             <span style={{ fontSize:12, color:sentColor, fontWeight:700 }}>{sentLabel}</span>
           </div>
-          <div style={{ position:"relative", height:8, borderRadius:4, background:"linear-gradient(to right,#ef4444 0%,#f59e0b 50%,#22c55e 100%)" }}>
-            <div style={{ position:"absolute", left:`${sentPct}%`, top:"50%", transform:"translate(-50%,-50%)", width:14, height:14, borderRadius:"50%", background:"white", border:`2.5px solid ${sentColor}`, boxShadow:"0 1px 4px rgba(0,0,0,0.4)" }} />
+          <div style={{ position:"relative", height:10, borderRadius:5, background:"linear-gradient(to right,#ef4444 0%,#f59e0b 50%,#22c55e 100%)" }}>
+            <div style={{ position:"absolute", left:`${sentPct}%`, top:"50%", transform:"translate(-50%,-50%)", width:18, height:18, borderRadius:"50%", background:sentColor, border:`2.5px solid ${T.bg}`, boxShadow:"0 1px 6px rgba(0,0,0,0.5)", display:"flex", alignItems:"center", justifyContent:"center" }} />
+            {/* Label callout */}
+            <div style={{ position:"absolute", left:`${sentPct}%`, top:"calc(100% + 6px)", transform:"translateX(-50%)", fontSize:9, fontWeight:700, color:sentColor, whiteSpace:"nowrap", background:T.bg, padding:"1px 4px", borderRadius:3, border:`1px solid ${sentColor}40` }}>{avgSent >= 0 ? "+" : ""}{avgSent.toFixed(2)}</div>
           </div>
-          <div style={{ display:"flex", justifyContent:"space-between", fontSize:9, color:T.faint, marginTop:4 }}>
-            <span>–1</span><span>0</span><span>+1</span>
+          <div style={{ display:"flex", justifyContent:"space-between", fontSize:9, color:T.faint, marginTop:18 }}>
+            <span>Negative</span><span>Neutral</span><span>Positive</span>
           </div>
-          <div style={{ marginTop:10, fontSize:10, color:T.dim }}>{withData.length} companies with data</div>
+          <div style={{ marginTop:6, fontSize:10, color:T.dim }}>{withData.length} companies with data</div>
         </Card>
 
         {/* Trend */}
@@ -515,6 +679,102 @@ function Portfolio({ companies, settings, onSelect, onRun, onRunAll, onUpdateCom
     setRunning(null);
   };
 
+  const handlePortfolioDownload = () => {
+    const dateStr = new Date().toLocaleDateString("en-US", { month:"long", day:"numeric", year:"numeric" });
+    const withData = portfolioCompanies.filter(c => c.runs?.[0]?.sentimentScore !== undefined);
+    const totalArticles = withData.reduce((s, c) => s + (c.runs[0].mediaCount || 0), 0);
+    const totalSocial   = withData.reduce((s, c) => s + (c.runs[0].socialCount || 0), 0);
+    const sorted = [...portfolioCompanies].sort((a, b) => {
+      const aS = a.runs?.[0]?.sentimentScore ?? -99;
+      const bS = b.runs?.[0]?.sentimentScore ?? -99;
+      return bS - aS;
+    });
+
+    const sentColor = s => s > 0.2 ? "#16a34a" : s < -0.2 ? "#dc2626" : "#d97706";
+
+    const rows = sorted.map(c => {
+      const run = c.runs?.[0];
+      const s = run?.sentimentScore;
+      const hasRun = s !== undefined;
+      return `<tr style="border-bottom:1px solid #f3f4f6">
+        <td style="padding:10px 12px;font-weight:700;color:#111">${c.name}${c.isFirm ? " ★" : ""}</td>
+        <td style="padding:10px 12px;color:#6b7280;font-size:11px">${(c.categories||[]).slice(0,2).join(", ") || "—"}</td>
+        <td style="padding:10px 12px;text-align:right;font-weight:700;color:${hasRun ? sentColor(s) : "#9ca3af"}">${hasRun ? (s >= 0 ? "+" : "") + s.toFixed(2) : "—"}</td>
+        <td style="padding:10px 12px;text-align:right">${hasRun ? (run.mediaCount||0).toLocaleString() : "—"}</td>
+        <td style="padding:10px 12px;text-align:right">${hasRun ? (run.socialCount||0).toLocaleString() : "—"}</td>
+        <td style="padding:10px 12px;text-align:right;color:#9ca3af;font-size:11px">${run?.ranAt ? run.ranAt.slice(0,10) : "—"}</td>
+      </tr>`;
+    }).join("");
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>Radical Ventures — Portfolio Intelligence Report</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 28px; color: #111; background: #fff; }
+  @media print { body { margin: 20px; } }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 8px 12px; font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 2px solid #111; }
+  th.r { text-align: right; }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; }
+</style>
+</head><body>
+
+<div style="border-bottom:2px solid #111;padding-bottom:16px;margin-bottom:28px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between">
+    <div>
+      <h1 style="font-size:24px;font-weight:900;margin:0;letter-spacing:-0.03em">Radical Ventures — Portfolio Intelligence Report</h1>
+      <p style="color:#6b7280;font-size:13px;margin:6px 0 0">Prepared by Radical Intelligence Platform · ${dateStr}</p>
+    </div>
+    <div style="text-align:right;font-size:11px;color:#9ca3af">
+      ${portfolioCompanies.length} companies monitored<br>
+      ${withData.length} with data · ${totalArticles.toLocaleString()} articles · ${totalSocial.toLocaleString()} social posts
+    </div>
+  </div>
+</div>
+
+${withData.length > 0 ? `
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:28px">
+  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:16px 18px">
+    <div style="font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:6px">Portfolio Avg Sentiment</div>
+    <div style="font-size:28px;font-weight:900;color:${sentColor(avgSent || 0)}">${(avgSent||0) >= 0 ? "+" : ""}${(avgSent||0).toFixed(2)}</div>
+  </div>
+  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:16px 18px">
+    <div style="font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:6px">Total Articles</div>
+    <div style="font-size:28px;font-weight:900;color:#111">${totalArticles.toLocaleString()}</div>
+  </div>
+  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:16px 18px">
+    <div style="font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:6px">Total Social Posts</div>
+    <div style="font-size:28px;font-weight:900;color:#111">${totalSocial.toLocaleString()}</div>
+  </div>
+</div>` : ""}
+
+<h2 style="font-size:13px;font-weight:800;color:#111;margin:0 0 14px;text-transform:uppercase;letter-spacing:0.05em">Company Breakdown</h2>
+<table>
+  <thead><tr>
+    <th>Company</th>
+    <th>Categories</th>
+    <th class="r">Sentiment</th>
+    <th class="r">Articles</th>
+    <th class="r">Social</th>
+    <th class="r">Last Run</th>
+  </tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+
+<div style="margin-top:32px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:10px;color:#9ca3af">
+  Generated by Radical Intelligence Platform · Radical Ventures · ${dateStr}
+</div>
+
+</body></html>`;
+
+    const w = window.open("", "_blank");
+    if (!w) return;
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 600);
+  };
+
   return (
     <div style={{ padding:"28px 32px", maxWidth:1400, margin:"0 auto" }}>
       {/* Header */}
@@ -541,6 +801,7 @@ function Portfolio({ companies, settings, onSelect, onRun, onRunAll, onUpdateCom
               </button>
             );
           })}
+          <Btn onClick={handlePortfolioDownload} variant="ghost" style={{ fontSize:11 }}>⬇ Download</Btn>
           <Btn onClick={onAdd} variant="ghost">+ Add</Btn>
           <Btn onClick={handleRunAll} variant="primary" disabled={running === "all"}>
             {running === "all" ? <><Spinner /> Running all…</> : "▶ Run all"}
@@ -875,9 +1136,15 @@ function OverviewTab({ company, run }) {
               })}
             </div>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(340px, 1fr))", gap:10 }}>
-            {social.map(item => <SocialCard key={item.id} item={item} />)}
-          </div>
+          <SocialInsights posts={socialFiltered} />
+          {(() => {
+            const topEngId = [...socialFiltered].sort((a,b)=>(b.engagementScore||0)-(a.engagementScore||0))[0]?.id;
+            return (
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(340px, 1fr))", gap:10, marginTop:12 }}>
+                {social.map(item => <SocialCard key={item.id} item={item} highlight={item.id === topEngId} />)}
+              </div>
+            );
+          })()}
           {socialFiltered.length > socialLimit && (
             <div style={{ textAlign:"center", marginTop:12 }}>
               <Btn variant="ghost" onClick={() => setSocialLimit(l => l + 50)} style={{ fontSize:12 }}>
@@ -907,26 +1174,110 @@ function OverviewTab({ company, run }) {
   );
 }
 
+// ── SVG Donut Chart ───────────────────────────────────────────────────────────
+
+function DonutChart({ data, size = 164, thickness = 30, centerLabel }) {
+  const cx = size / 2, cy = size / 2;
+  const r  = (size - thickness) / 2;
+  const C  = 2 * Math.PI * r;
+  const total = data.reduce((s, d) => s + (d.value || 0), 0);
+  if (total === 0) return (
+    <div style={{ width:size, height:size, borderRadius:"50%", background:T.ghost, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <span style={{ fontSize:11, color:T.faint }}>No data</span>
+    </div>
+  );
+  let cum = 0;
+  const segs = data.map(d => {
+    const pct   = (d.value || 0) / total;
+    const dash  = pct * C;
+    const gap   = C - dash;
+    const start = cum;
+    cum += dash;
+    return { ...d, dash, gap, start };
+  });
+  return (
+    <div style={{ position:"relative", width:size, height:size, flexShrink:0 }}>
+      <svg width={size} height={size} style={{ transform:"rotate(-90deg)" }}>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke={T.ghost} strokeWidth={thickness} />
+        {segs.map((s, i) => s.value > 0 && (
+          <circle key={i} cx={cx} cy={cy} r={r} fill="none"
+            stroke={s.color} strokeWidth={thickness - 2}
+            strokeDasharray={`${s.dash} ${s.gap}`}
+            strokeDashoffset={C - s.start}
+            strokeLinecap="butt"
+          />
+        ))}
+      </svg>
+      {centerLabel && (
+        <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", textAlign:"center", padding:thickness + 4 }}>
+          {centerLabel}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Company Detail — SOV tab ──────────────────────────────────────────────────
+
+function SovSection({ title, children }) {
+  return (
+    <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"16px 20px" }}>
+      <div style={{ fontSize:11, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:14 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
 
 function SOVTab({ company, settings, onUpdate, toast }) {
   const [editMode, setEditMode] = useState(false);
   const [newComp, setNewComp] = useState("");
+  const [localComps, setLocalComps] = useState(null); // staged buffer while editing
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState("");
   const [suggesting, setSuggesting] = useState(false);
 
   const sov = company.sovRun;
-  const competitors = company.competitors || [];
+  // During edit mode, display the local buffer; otherwise show saved state
+  const competitors = editMode ? (localComps || company.competitors || []) : (company.competitors || []);
 
+  const startEdit = () => {
+    setLocalComps([...(company.competitors || [])]);
+    setEditMode(true);
+  };
+
+  // Commit all staged changes to persistent state
+  const handleDone = () => {
+    let finalComps = localComps || [];
+    // Auto-add anything still typed in the input field
+    if (newComp.trim()) {
+      const name = newComp.trim();
+      const isDupe = finalComps.some(c => c.name.toLowerCase() === name.toLowerCase());
+      if (!isDupe) finalComps = [...finalComps, { id: `c-${Date.now()}`, name, rationale: "" }];
+      setNewComp("");
+    }
+    onUpdate({ ...company, competitors: finalComps });
+    toast(`${finalComps.length} competitor${finalComps.length !== 1 ? "s" : ""} saved`, "success");
+    setLocalComps(null);
+    setEditMode(false);
+  };
+
+  const handleCancel = () => {
+    setNewComp("");
+    setLocalComps(null);
+    setEditMode(false);
+  };
+
+  // Modify the local buffer only — nothing is persisted until Done
   const handleAdd = () => {
-    if (!newComp.trim()) return;
-    onUpdate({ ...company, competitors: [...competitors, { id: `c-${Date.now()}`, name: newComp.trim(), rationale: "" }] });
+    const name = newComp.trim();
+    if (!name) return;
+    const isDupe = (localComps || []).some(c => c.name.toLowerCase() === name.toLowerCase());
+    if (!isDupe) setLocalComps(prev => [...(prev || []), { id: `c-${Date.now()}`, name, rationale: "" }]);
     setNewComp("");
   };
 
   const handleRemove = id => {
-    onUpdate({ ...company, competitors: competitors.filter(c => c.id !== id) });
+    setLocalComps(prev => (prev || []).filter(c => c.id !== id));
   };
 
   const handleRun = async () => {
@@ -964,18 +1315,53 @@ function SOVTab({ company, settings, onUpdate, toast }) {
     setSuggesting(false);
   };
 
-  const maxMedia = sov ? Math.max(...sov.results.map(r => r.mediaCount || 0), 1) : 1;
-  const maxSocial = sov ? Math.max(...sov.results.map(r => r.socialCount || 0), 1) : 1;
+  const [aiSummary, setAiSummary] = useState(sov?.aiSummary || "");
+  const [aiLoading, setAiLoading] = useState(false);
+
+  // Assign deterministic colors: base company always gets index 0
+  const coloredResults = (() => {
+    if (!sov?.results) return [];
+    let peerIdx = 1;
+    return sov.results.map(r => ({ ...r, color: r.isBase ? SOV_PALETTE[0] : SOV_PALETTE[peerIdx++ % SOV_PALETTE.length] }));
+  })();
+  const byMedia   = [...coloredResults].sort((a,b) => (b.mediaCount||0)-(a.mediaCount||0));
+  const bySocial  = [...coloredResults].sort((a,b) => (b.socialCount||0)-(a.socialCount||0));
+  const totalMedia  = coloredResults.reduce((s,r) => s+(r.mediaCount||0), 0);
+  const totalSocial = coloredResults.reduce((s,r) => s+(r.socialCount||0), 0);
+  const maxMedia  = Math.max(...coloredResults.map(r => r.mediaCount||0), 1);
+  const maxSocial = Math.max(...coloredResults.map(r => r.socialCount||0), 1);
+  const hasSocial = coloredResults.some(r => r.socialCount > 0);
+
+  const handleAISummary = async () => {
+    if (!sov?.results?.length || !settings.apiKeys.openai && !settings.apiKeys.anthropic && !settings.apiKeys.openrouter) return;
+    setAiLoading(true);
+    try {
+      const rows = coloredResults.map(r =>
+        `${r.name}${r.isBase?" (focal company)":""}: press=${r.mediaCount||0} articles (${totalMedia > 0 ? Math.round((r.mediaCount||0)/totalMedia*100) : 0}% SOV), social=${r.socialCount||0} posts (${totalSocial > 0 ? Math.round((r.socialCount||0)/totalSocial*100) : 0}% SOV), sentiment=${(r.sentiment||0).toFixed(2)} (${sl(r.sentiment||0)})`
+      ).join("\n");
+      const prompt = `You are a competitive intelligence analyst advising a VC fund. Analyse this share-of-voice data for ${company.name} vs peers:\n\n${rows}\n\nWrite a concise 3-paragraph competitive analysis:\n1. Coverage dominance: who leads press share of voice and why it matters\n2. Sentiment positioning: who has strongest/weakest sentiment and what that signals\n3. Strategic implications for ${company.name}: specific actionable observations\n\nBe data-specific (reference actual numbers). No bullet points — flowing prose.`;
+      const resp = await callLLM(prompt, "You are a competitive intelligence analyst. Be concise, specific, and insight-driven.", settings.apiKeys);
+      setAiSummary(resp);
+      onUpdate({ ...company, sovRun: { ...sov, aiSummary: resp } });
+    } catch { toast("AI summary failed", "error"); }
+    setAiLoading(false);
+  };
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
       {/* Competitor management */}
-      <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"16px 20px" }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
-          <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Competitors ({competitors.length})</div>
+      <SovSection title={`Competitors (${competitors.length})`}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
           <div style={{ display:"flex", gap:6 }}>
             <Btn onClick={handleSuggest} disabled={suggesting} variant="ghost" style={{ fontSize:11 }}>{suggesting ? <><Spinner /> Suggesting…</> : "✨ AI suggest"}</Btn>
-            <Btn onClick={() => setEditMode(!editMode)} variant="ghost" style={{ fontSize:11 }}>{editMode ? "Done" : "Edit"}</Btn>
+            {editMode ? (
+              <>
+                <Btn onClick={handleDone} variant="primary" style={{ fontSize:11 }}>✓ Done</Btn>
+                <Btn onClick={handleCancel} variant="ghost" style={{ fontSize:11 }}>Cancel</Btn>
+              </>
+            ) : (
+              <Btn onClick={startEdit} variant="ghost" style={{ fontSize:11 }}>Edit</Btn>
+            )}
           </div>
         </div>
         <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
@@ -985,6 +1371,7 @@ function SOVTab({ company, settings, onUpdate, toast }) {
               {editMode && <button onClick={() => handleRemove(c.id)} style={{ background:"none", border:"none", color:T.faint, cursor:"pointer", padding:0, fontSize:14, lineHeight:1 }}>×</button>}
             </div>
           ))}
+          {competitors.length === 0 && <span style={{ fontSize:12, color:T.faint }}>No competitors added yet</span>}
         </div>
         {editMode && (
           <div style={{ display:"flex", gap:8, marginTop:12 }}>
@@ -992,7 +1379,7 @@ function SOVTab({ company, settings, onUpdate, toast }) {
             <Btn onClick={handleAdd} variant="primary">Add</Btn>
           </div>
         )}
-      </div>
+      </SovSection>
 
       {/* Run button */}
       <div style={{ display:"flex", alignItems:"center", gap:12 }}>
@@ -1005,67 +1392,294 @@ function SOVTab({ company, settings, onUpdate, toast }) {
         {sov && <span style={{ fontSize:11, color:T.faint }}>Last run: {ago(sov.ranAt)}</span>}
       </div>
 
-      {/* SOV results */}
       {sov?.results?.length > 0 && (
         <>
-          <div>
-            <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:12 }}>News coverage</div>
-            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-              {[...sov.results].sort((a, b) => (b.mediaCount || 0) - (a.mediaCount || 0)).map(r => (
-                <div key={r.name} style={{ display:"flex", alignItems:"center", gap:12 }}>
-                  <div style={{ width:150, fontSize:12, fontWeight: r.isBase ? 700 : 500, color: r.isBase ? T.accent : T.text, flexShrink:0, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{r.name}</div>
-                  <div style={{ flex:1, height:8, background:T.ghost, borderRadius:4, overflow:"hidden" }}>
-                    <div style={{ height:"100%", width:`${(r.mediaCount || 0) / maxMedia * 100}%`, background: r.isBase ? T.accent : T.dim, borderRadius:4 }} />
-                  </div>
-                  <div style={{ width:60, textAlign:"right", fontSize:12, color:T.dim }}>{r.mediaCount || 0}</div>
-                  <Pip score={r.sentiment || 0} size={10} />
-                </div>
-              ))}
-            </div>
+          {/* ── Summary Scorecard ─────────────────────────────────── */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))", gap:10 }}>
+            {[
+              { label:"Companies tracked",  val: coloredResults.length,       unit:"" },
+              { label:"Total press articles", val: totalMedia.toLocaleString(),  unit:"" },
+              { label:"Total social posts",   val: totalSocial.toLocaleString(), unit:"" },
+              { label:`${company.name} press SOV`, val: totalMedia > 0 ? `${Math.round(((coloredResults.find(r=>r.isBase)?.mediaCount||0)/totalMedia)*100)}%` : "—", unit:"" },
+              { label:`${company.name} social SOV`, val: totalSocial > 0 ? `${Math.round(((coloredResults.find(r=>r.isBase)?.socialCount||0)/totalSocial)*100)}%` : "—", unit:"" },
+              { label:`${company.name} sentiment`, val: sl(coloredResults.find(r=>r.isBase)?.sentiment||0), unit:"", color: sc(coloredResults.find(r=>r.isBase)?.sentiment||0) },
+            ].map(({ label, val, color }) => (
+              <div key={label} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"12px 14px" }}>
+                <div style={{ fontSize:10, color:T.faint, marginBottom:4, lineHeight:1.3 }}>{label}</div>
+                <div style={{ fontSize:18, fontWeight:800, color: color || T.text, letterSpacing:"-0.02em" }}>{val}</div>
+              </div>
+            ))}
           </div>
 
-          {sov.results.some(r => r.socialCount > 0) && (
-            <div>
-              <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:12 }}>Social mentions</div>
-              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                {[...sov.results].sort((a, b) => (b.socialCount || 0) - (a.socialCount || 0)).map(r => (
-                  <div key={r.name} style={{ display:"flex", alignItems:"center", gap:12 }}>
-                    <div style={{ width:150, fontSize:12, fontWeight: r.isBase ? 700 : 500, color: r.isBase ? T.accent : T.text, flexShrink:0 }}>{r.name}</div>
-                    <div style={{ flex:1, height:8, background:T.ghost, borderRadius:4, overflow:"hidden" }}>
-                      <div style={{ height:"100%", width:`${(r.socialCount || 0) / maxSocial * 100}%`, background: r.isBase ? T.accent : T.dim, borderRadius:4 }} />
+          {/* ── Pie Charts ────────────────────────────────────────── */}
+          <div style={{ display:"grid", gridTemplateColumns: hasSocial ? "1fr 1fr" : "1fr", gap:16 }}>
+            {/* Press SOV pie */}
+            <SovSection title="Press Share of Voice">
+              <div style={{ display:"flex", alignItems:"center", gap:20, flexWrap:"wrap" }}>
+                <DonutChart
+                  data={byMedia.map(r => ({ value: r.mediaCount||0, color: r.color, name: r.name }))}
+                  centerLabel={
+                    <div style={{ textAlign:"center" }}>
+                      <div style={{ fontSize:18, fontWeight:800, color:T.text }}>{totalMedia}</div>
+                      <div style={{ fontSize:9, color:T.faint }}>articles</div>
                     </div>
-                    <div style={{ width:60, textAlign:"right", fontSize:12, color:T.dim }}>{r.socialCount || 0}</div>
-                  </div>
-                ))}
+                  }
+                />
+                <div style={{ display:"flex", flexDirection:"column", gap:7, minWidth:0, flex:1 }}>
+                  {byMedia.map(r => (
+                    <div key={r.name} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <div style={{ width:10, height:10, borderRadius:2, background:r.color, flexShrink:0 }} />
+                      <div style={{ fontSize:11, fontWeight: r.isBase?700:400, color: r.isBase?T.text:T.dim, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", flex:1, minWidth:0 }}>{r.name}</div>
+                      <div style={{ fontSize:11, fontWeight:600, color:T.dim, flexShrink:0 }}>{r.mediaCount||0}</div>
+                      <div style={{ fontSize:10, color:T.faint, width:32, textAlign:"right", flexShrink:0 }}>{totalMedia > 0 ? `${Math.round((r.mediaCount||0)/totalMedia*100)}%` : "—"}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            </SovSection>
 
-          {/* Sentiment spectrum */}
-          <div>
-            <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:12 }}>Sentiment landscape</div>
-            <div style={{ position:"relative", height:24, borderRadius:12, background:"linear-gradient(to right, #ef4444, #f59e0b, #22c55e)", overflow:"visible" }}>
-              {sov.results.map(r => {
-                const pct = Math.min(100, Math.max(0, ((r.sentiment || 0) + 1) / 2 * 100));
-                return (
-                  <div key={r.name} title={`${r.name}: ${(r.sentiment || 0).toFixed(2)}`}
-                    style={{ position:"absolute", left:`${pct}%`, top:"50%", transform:"translate(-50%,-50%)", width:14, height:14, borderRadius:"50%", background: r.isBase ? T.accent : T.text, border:`2px solid ${T.bg}`, cursor:"default" }}
+            {/* Social SOV pie */}
+            {hasSocial && (
+              <SovSection title="Social Share of Voice">
+                <div style={{ display:"flex", alignItems:"center", gap:20, flexWrap:"wrap" }}>
+                  <DonutChart
+                    data={bySocial.map(r => ({ value: r.socialCount||0, color: r.color, name: r.name }))}
+                    centerLabel={
+                      <div style={{ textAlign:"center" }}>
+                        <div style={{ fontSize:18, fontWeight:800, color:T.text }}>{totalSocial}</div>
+                        <div style={{ fontSize:9, color:T.faint }}>posts</div>
+                      </div>
+                    }
                   />
+                  <div style={{ display:"flex", flexDirection:"column", gap:7, minWidth:0, flex:1 }}>
+                    {bySocial.map(r => (
+                      <div key={r.name} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        <div style={{ width:10, height:10, borderRadius:2, background:r.color, flexShrink:0 }} />
+                        <div style={{ fontSize:11, fontWeight: r.isBase?700:400, color: r.isBase?T.text:T.dim, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", flex:1, minWidth:0 }}>{r.name}</div>
+                        <div style={{ fontSize:11, fontWeight:600, color:T.dim, flexShrink:0 }}>{r.socialCount||0}</div>
+                        <div style={{ fontSize:10, color:T.faint, width:32, textAlign:"right", flexShrink:0 }}>{totalSocial > 0 ? `${Math.round((r.socialCount||0)/totalSocial*100)}%` : "—"}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </SovSection>
+            )}
+          </div>
+
+          {/* ── Competitive Matrix ────────────────────────────────── */}
+          <SovSection title="Competitive Matrix">
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                <thead>
+                  <tr style={{ borderBottom:`1px solid ${T.border}` }}>
+                    {["Company","Press Articles","Press SOV","Social Posts","Social SOV","Sentiment","Position"].map(h => (
+                      <th key={h} style={{ textAlign: h==="Company"?"left":"right", padding:"6px 10px", fontSize:10, fontWeight:700, color:T.faint, textTransform:"uppercase", letterSpacing:"0.05em", whiteSpace:"nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {byMedia.map((r, i) => {
+                    const pressSov  = totalMedia  > 0 ? (r.mediaCount||0)/totalMedia  : 0;
+                    const socialSov = totalSocial > 0 ? (r.socialCount||0)/totalSocial : 0;
+                    const s = r.sentiment || 0;
+                    return (
+                      <tr key={r.name} style={{ borderBottom:`1px solid ${T.border}22`, background: i%2===0?"transparent":"rgba(255,255,255,0.02)" }}>
+                        <td style={{ padding:"8px 10px" }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                            <div style={{ width:10, height:10, borderRadius:2, background:r.color, flexShrink:0 }} />
+                            <span style={{ fontWeight: r.isBase?700:500, color: r.isBase?T.text:T.dim }}>{r.name}</span>
+                            {r.isBase && <span style={{ fontSize:9, padding:"1px 5px", borderRadius:4, background:`${T.accent}25`, color:T.accent }}>YOU</span>}
+                          </div>
+                        </td>
+                        <td style={{ textAlign:"right", padding:"8px 10px", color:T.text, fontWeight:600 }}>{(r.mediaCount||0).toLocaleString()}</td>
+                        <td style={{ textAlign:"right", padding:"8px 10px" }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:6, justifyContent:"flex-end" }}>
+                            <div style={{ width:60, height:5, background:T.ghost, borderRadius:3, overflow:"hidden" }}>
+                              <div style={{ height:"100%", width:`${pressSov*100}%`, background:r.color, borderRadius:3 }} />
+                            </div>
+                            <span style={{ color:T.dim, fontSize:11, width:34, textAlign:"right" }}>{Math.round(pressSov*100)}%</span>
+                          </div>
+                        </td>
+                        <td style={{ textAlign:"right", padding:"8px 10px", color:T.text, fontWeight:600 }}>{(r.socialCount||0).toLocaleString()}</td>
+                        <td style={{ textAlign:"right", padding:"8px 10px" }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:6, justifyContent:"flex-end" }}>
+                            <div style={{ width:60, height:5, background:T.ghost, borderRadius:3, overflow:"hidden" }}>
+                              <div style={{ height:"100%", width:`${socialSov*100}%`, background:r.color, borderRadius:3 }} />
+                            </div>
+                            <span style={{ color:T.dim, fontSize:11, width:34, textAlign:"right" }}>{Math.round(socialSov*100)}%</span>
+                          </div>
+                        </td>
+                        <td style={{ textAlign:"right", padding:"8px 10px" }}>
+                          <SentimentChip score={s} />
+                        </td>
+                        <td style={{ textAlign:"right", padding:"8px 10px" }}>
+                          <span style={{ fontSize:10, color:T.faint }}>
+                            {pressSov > 0.4 ? "🏆 Dominant" : pressSov > 0.25 ? "📈 Strong" : pressSov > 0.1 ? "📊 Present" : "🔍 Niche"}
+                            {s > 0.3 && " · 😊"}{s < -0.2 && " · ⚠️"}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </SovSection>
+
+          {/* ── Sentiment Comparison ──────────────────────────────── */}
+          <SovSection title="Sentiment Comparison">
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {/* Gradient scale labels */}
+              <div style={{ display:"grid", gridTemplateColumns:"140px 1fr 60px", gap:8, alignItems:"center", marginBottom:2 }}>
+                <div />
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:9, color:T.faint }}>
+                  <span>Very Negative (−1)</span><span>Neutral (0)</span><span>Very Positive (+1)</span>
+                </div>
+                <div />
+              </div>
+              {/* Per-company sentiment bars */}
+              {[...coloredResults].sort((a,b) => (b.sentiment||0)-(a.sentiment||0)).map(r => {
+                const s = r.sentiment || 0;
+                // Bar from centre: negative goes left, positive goes right
+                const pct = Math.abs(s) * 50; // 0–50% of half-width
+                const isPos = s >= 0;
+                return (
+                  <div key={r.name} style={{ display:"grid", gridTemplateColumns:"140px 1fr 60px", gap:8, alignItems:"center" }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                      <div style={{ width:10, height:10, borderRadius:2, background:r.color, flexShrink:0 }} />
+                      <span style={{ fontSize:11, fontWeight: r.isBase?700:400, color: r.isBase?T.text:T.dim, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{r.name}</span>
+                    </div>
+                    {/* Two-sided bar centred at 50% */}
+                    <div style={{ position:"relative", height:8, background:T.ghost, borderRadius:4, overflow:"hidden" }}>
+                      <div style={{ position:"absolute", top:0, bottom:0, width:"1px", left:"50%", background:T.border, zIndex:1 }} />
+                      <div style={{
+                        position:"absolute", top:1, bottom:1, borderRadius:3,
+                        background: r.color,
+                        left:  isPos ? "50%"           : `${50 - pct}%`,
+                        width: `${pct}%`,
+                        minWidth: s !== 0 ? 3 : 0,
+                      }} />
+                    </div>
+                    <SentimentChip score={s} />
+                  </div>
                 );
               })}
             </div>
-            <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, color:T.faint, marginTop:4 }}>
-              <span>Very Negative</span><span>Neutral</span><span>Very Positive</span>
-            </div>
-            <div style={{ display:"flex", gap:10, marginTop:10, flexWrap:"wrap" }}>
-              {sov.results.map(r => (
-                <div key={r.name} style={{ display:"flex", alignItems:"center", gap:6 }}>
-                  <div style={{ width:10, height:10, borderRadius:"50%", background: r.isBase ? T.accent : T.text }} />
-                  <span style={{ fontSize:11, color: r.isBase ? T.accent : T.dim }}>{r.name}</span>
+          </SovSection>
+
+          {/* ── AI Competitive Analysis ───────────────────────────── */}
+          <SovSection title="AI Competitive Analysis">
+            {aiSummary ? (
+              <div>
+                <div style={{ fontSize:12, color:T.dim, lineHeight:1.7, whiteSpace:"pre-wrap" }}>{aiSummary}</div>
+                <div style={{ marginTop:12 }}>
+                  <Btn onClick={handleAISummary} disabled={aiLoading} variant="ghost" style={{ fontSize:11 }}>
+                    {aiLoading ? <><Spinner /> Regenerating…</> : "↻ Regenerate"}
+                  </Btn>
                 </div>
-              ))}
-            </div>
-          </div>
+              </div>
+            ) : (
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-start", gap:10 }}>
+                <p style={{ fontSize:12, color:T.dim, margin:0 }}>
+                  Generate an AI-written narrative covering coverage dominance, sentiment positioning, and strategic implications for {company.name}.
+                </p>
+                <Btn onClick={handleAISummary} disabled={aiLoading} variant="primary" style={{ fontSize:12 }}>
+                  {aiLoading ? <><Spinner /> Analysing…</> : "✨ Generate Competitive Analysis"}
+                </Btn>
+              </div>
+            )}
+          </SovSection>
+
+          {/* ── Coverage Snapshots ────────────────────────────────── */}
+          {(() => {
+            // Focal company articles from main run; competitor articles from SOV topArticles
+            const focalRun = company.runs?.[0];
+            const focalArticles = (focalRun?.mediaResults || []).slice(0, 5).map(a => ({
+              title: a.title, source: a.source, url: a.url, date: a.date, sentiment: a.sentiment || 0,
+            }));
+            const focalSocial = (focalRun?.socialResults || []).slice(0, 4);
+            const competitorSnaps = coloredResults.filter(r => !r.isBase && r.topArticles?.length);
+            const hasFocal = focalArticles.length > 0 || focalSocial.length > 0;
+            const hasSnaps = hasFocal || competitorSnaps.length > 0;
+            if (!hasSnaps) return null;
+
+            const ArticleRow = ({ a, color }) => (
+              <a href={a.url || "#"} target="_blank" rel="noopener noreferrer" style={{ textDecoration:"none", display:"block" }}>
+                <div style={{ display:"flex", alignItems:"flex-start", gap:8, padding:"7px 0", borderBottom:`1px solid ${T.border}22`, cursor:"pointer" }}
+                  onMouseEnter={e => e.currentTarget.querySelector(".atitle").style.color = color}
+                  onMouseLeave={e => e.currentTarget.querySelector(".atitle").style.color = T.text}>
+                  <div style={{ width:3, minHeight:32, borderRadius:2, background:color, flexShrink:0, marginTop:2 }} />
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div className="atitle" style={{ fontSize:11, fontWeight:600, color:T.text, lineHeight:1.4, transition:"color 0.15s" }}>{a.title}</div>
+                    <div style={{ display:"flex", gap:8, marginTop:3 }}>
+                      <span style={{ fontSize:10, color:T.faint }}>{a.source}</span>
+                      {a.date && <span style={{ fontSize:10, color:T.faint }}>{a.date}</span>}
+                      <span style={{ marginLeft:"auto", fontSize:10, fontWeight:600, color:sc(a.sentiment) }}>{a.sentiment > 0 ? "+" : ""}{a.sentiment.toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+              </a>
+            );
+
+            const SocialRow = ({ s, color }) => (
+              <a href={s.url || "#"} target="_blank" rel="noopener noreferrer" style={{ textDecoration:"none", display:"block" }}>
+                <div style={{ display:"flex", alignItems:"flex-start", gap:8, padding:"7px 0", borderBottom:`1px solid ${T.border}22` }}>
+                  <div style={{ width:3, minHeight:28, borderRadius:2, background:color, flexShrink:0, marginTop:2 }} />
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:"flex", gap:6, alignItems:"center", marginBottom:3 }}>
+                      <span style={{ fontSize:10, fontWeight:700, color: PLAT[s.platform]?.color || T.dim }}>{PLAT[s.platform]?.icon || "◈"} {s.author}</span>
+                      {s.isVerified && <span style={{ fontSize:9, color:"#60a5fa" }}>✓</span>}
+                      {s.followerCount > 0 && <span style={{ fontSize:9, color:T.faint }}>{fmt(s.followerCount)} followers</span>}
+                    </div>
+                    <div style={{ fontSize:11, color:T.dim, lineHeight:1.4 }}>{(s.text || "").slice(0, 160)}{(s.text || "").length > 160 ? "…" : ""}</div>
+                    {(s.likes > 0 || s.retweets > 0) && (
+                      <div style={{ display:"flex", gap:8, marginTop:3 }}>
+                        {s.likes > 0    && <span style={{ fontSize:9, color:T.faint }}>♥ {fmt(s.likes)}</span>}
+                        {s.retweets > 0 && <span style={{ fontSize:9, color:T.faint }}>↺ {fmt(s.retweets)}</span>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </a>
+            );
+
+            return (
+              <SovSection title="Coverage Snapshots">
+                <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+                  {/* Focal company */}
+                  {hasFocal && (() => {
+                    const focalColor = coloredResults.find(r => r.isBase)?.color || SOV_PALETTE[0];
+                    return (
+                      <div>
+                        <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:8 }}>
+                          <div style={{ width:10, height:10, borderRadius:2, background:focalColor }} />
+                          <span style={{ fontSize:11, fontWeight:700, color:T.text }}>{company.name}</span>
+                          <span style={{ fontSize:10, padding:"1px 6px", borderRadius:4, background:`${T.accent}20`, color:T.accent }}>YOU</span>
+                        </div>
+                        {focalArticles.map((a, i) => <ArticleRow key={i} a={a} color={focalColor} />)}
+                        {focalSocial.length > 0 && (
+                          <div style={{ marginTop:8 }}>
+                            <div style={{ fontSize:10, color:T.faint, marginBottom:4 }}>Top social posts</div>
+                            {focalSocial.map((s, i) => <SocialRow key={i} s={s} color={focalColor} />)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  {/* Competitors */}
+                  {competitorSnaps.map(r => (
+                    <div key={r.name}>
+                      <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:8 }}>
+                        <div style={{ width:10, height:10, borderRadius:2, background:r.color }} />
+                        <span style={{ fontSize:11, fontWeight:600, color:T.dim }}>{r.name}</span>
+                      </div>
+                      {r.topArticles.slice(0, 5).map((a, i) => <ArticleRow key={i} a={a} color={r.color} />)}
+                    </div>
+                  ))}
+                </div>
+              </SovSection>
+            );
+          })()}
         </>
       )}
 
@@ -1078,11 +1692,298 @@ function SOVTab({ company, settings, onUpdate, toast }) {
   );
 }
 
+// ── Company Detail — Ask AI tab ───────────────────────────────────────────────
+
+function AskAITab({ company, settings }) {
+  const run = company.runs?.[0];
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const bottomRef = useRef(null);
+
+  const QUICK_PROMPTS = [
+    "Why is sentiment low?",
+    "What are the key themes in recent coverage?",
+    "Are there any risk or red-flag signals?",
+    "What positive developments are mentioned?",
+    "Summarise the most important business signals",
+    "How does recent social activity compare to news coverage?",
+  ];
+
+  const buildContext = () => {
+    if (!run) return "No data has been fetched for this company yet.";
+    const media  = run.mediaResults  || [];
+    const social = run.socialResults || [];
+    const sent   = run.sentimentScore || 0;
+    let ctx = `Company: ${company.name}\n`;
+    ctx += `Categories: ${(company.categories || []).join(", ") || "—"}\n`;
+    ctx += `Sentiment score: ${sent.toFixed(2)} (${sent > 0.2 ? "Positive" : sent < -0.2 ? "Negative" : "Neutral"})\n`;
+    ctx += `Data window: ${run.fromDate || "unknown"} → today\n`;
+    ctx += `Total coverage: ${media.length} articles, ${social.length} social posts\n`;
+    if (run.keyDrivers?.length) ctx += `AI-identified key drivers: ${run.keyDrivers.join(", ")}\n`;
+    if (run.businessSignals?.length) {
+      ctx += `Business signals:\n`;
+      run.businessSignals.forEach(s => ctx += `  • [${s.type}] ${s.summary}\n`);
+    }
+    if (media.length) {
+      ctx += `\nRecent news articles (${media.length} total, top 20 shown):\n`;
+      media.slice(0, 20).forEach((m, i) => {
+        ctx += `${i+1}. [${m.date}] [${m.source || ""}] ${m.title || ""}: ${(m.snippet || "").slice(0, 250)}\n`;
+      });
+    }
+    if (social.length) {
+      ctx += `\nRecent social posts (${social.length} total, top 15 shown):\n`;
+      social.slice(0, 15).forEach((s, i) => {
+        ctx += `${i+1}. [${s.platform}] ${s.author} — likes:${s.likes} RT:${s.retweets||0}: ${(s.text || "").slice(0, 280)}\n`;
+      });
+    }
+    return ctx;
+  };
+
+  const handleSend = async (questionOverride) => {
+    const question = (questionOverride || input).trim();
+    if (!question || loading) return;
+    setInput("");
+    const userMsg = { role:"user", content: question };
+    setMessages(prev => [...prev, userMsg]);
+    setLoading(true);
+    try {
+      const context = buildContext();
+      const systemPrompt = `You are an AI portfolio analyst for Radical Ventures, a leading AI-focused VC firm. You have access to the following recent media and social data for a portfolio company. Answer concisely and analytically, citing specific articles or posts where relevant. Be direct — avoid hedging language. If data is insufficient to answer, say so plainly.\n\n${context}`;
+      const raw = await callLLM(question, systemPrompt, settings.apiKeys);
+      setMessages(prev => [...prev, { role:"assistant", content: raw || "No response." }]);
+    } catch(e) {
+      setMessages(prev => [...prev, { role:"assistant", content:`⚠ Error: ${e.message}` }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Auto-scroll to bottom on new message
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, loading]);
+
+  const hasLLM = !!(settings.apiKeys?.vertex_enabled !== false || settings.apiKeys?.gemini || settings.apiKeys?.anthropic || settings.apiKeys?.cohere_north_key || settings.apiKeys?.cohere);
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", height:600, gap:0 }}>
+      {!run && (
+        <div style={{ padding:24, color:T.dim, fontSize:13, textAlign:"center" }}>
+          Run a data fetch first to enable AI interrogation.
+        </div>
+      )}
+      {!hasLLM && (
+        <div style={{ padding:"10px 16px", background:"rgba(251,191,36,0.08)", border:`1px solid rgba(251,191,36,0.25)`, borderRadius:8, fontSize:12, color:"#fbbf24", marginBottom:12 }}>
+          ⚠ No LLM configured. Add a Gemini, Anthropic, or Cohere key in Admin → API Keys to enable AI answers.
+        </div>
+      )}
+
+      {/* Quick prompts */}
+      {messages.length === 0 && run && (
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:11, color:T.dim, marginBottom:8 }}>Suggested questions:</div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+            {QUICK_PROMPTS.map(p => (
+              <button key={p} onClick={() => handleSend(p)} disabled={loading || !hasLLM}
+                style={{ padding:"6px 12px", borderRadius:20, fontSize:12, cursor:"pointer", border:`1px solid ${T.border}`, background:T.ghost, color:T.text, transition:"background 0.15s" }}>
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Message thread */}
+      <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:12, paddingRight:4, marginBottom:12 }}>
+        {messages.map((msg, i) => (
+          <div key={i} style={{ display:"flex", gap:10, alignItems:"flex-start", flexDirection: msg.role === "user" ? "row-reverse" : "row" }}>
+            <div style={{ width:28, height:28, borderRadius:"50%", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700,
+              background: msg.role === "user" ? T.accent : "rgba(99,102,241,0.2)", color: msg.role === "user" ? "#fff" : "#a5b4fc" }}>
+              {msg.role === "user" ? "Y" : "✦"}
+            </div>
+            <div style={{ maxWidth:"80%", padding:"10px 14px", borderRadius:12, fontSize:13, lineHeight:1.6,
+              background: msg.role === "user" ? `${T.accent}22` : T.card,
+              border: `1px solid ${msg.role === "user" ? `${T.accent}44` : T.border}`,
+              color: T.text, whiteSpace:"pre-wrap" }}>
+              {msg.content}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div style={{ display:"flex", gap:10, alignItems:"flex-start" }}>
+            <div style={{ width:28, height:28, borderRadius:"50%", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, background:"rgba(99,102,241,0.2)", color:"#a5b4fc" }}>✦</div>
+            <div style={{ padding:"10px 14px", borderRadius:12, background:T.card, border:`1px solid ${T.border}`, color:T.dim, fontSize:13 }}>
+              <Spinner /> Analysing…
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input row */}
+      <div style={{ display:"flex", gap:8, borderTop:`1px solid ${T.border}`, paddingTop:12 }}>
+        <input value={input} onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), handleSend())}
+          placeholder={run ? "Ask anything about this company's coverage…" : "No data yet — run a fetch first"}
+          disabled={!run || !hasLLM || loading}
+          style={{ flex:1, background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 13px", fontSize:13, color:T.text, outline:"none" }}
+        />
+        <Btn onClick={() => handleSend()} disabled={!input.trim() || !run || !hasLLM || loading} variant="primary">
+          {loading ? <Spinner /> : "Ask"}
+        </Btn>
+        {messages.length > 0 && (
+          <Btn onClick={() => setMessages([])} variant="ghost" style={{ fontSize:11 }}>Clear</Btn>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── SVG export generators (light-theme, self-contained for print/download) ────
+
+function exportSentimentSVG(score, width = 420) {
+  const pct = Math.min(100, Math.max(0, ((score + 1) / 2) * 100));
+  const x   = Math.round((pct / 100) * width);
+  const clr = score > 0.2 ? "#16a34a" : score < -0.2 ? "#dc2626" : "#d97706";
+  const lbl = score > 0.2 ? "Positive" : score < -0.2 ? "Negative" : "Neutral";
+  const val = (score >= 0 ? "+" : "") + score.toFixed(2);
+  const id  = `sg${Math.abs(Math.round(score * 100))}`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="56">
+  <defs><linearGradient id="${id}" x1="0" x2="1"><stop offset="0%" stop-color="#ef4444"/><stop offset="50%" stop-color="#f59e0b"/><stop offset="100%" stop-color="#22c55e"/></linearGradient></defs>
+  <rect x="0" y="14" width="${width}" height="12" rx="6" fill="url(#${id})"/>
+  <circle cx="${x}" cy="20" r="9" fill="${clr}" stroke="white" stroke-width="2.5"/>
+  <text x="${Math.max(36, Math.min(x, width - 60))}" y="42" text-anchor="middle" font-size="11" font-family="Arial,sans-serif" fill="${clr}" font-weight="bold">${val} — ${lbl}</text>
+  <text x="2"          y="56" font-size="9" font-family="Arial,sans-serif" fill="#9ca3af">Negative</text>
+  <text x="${width/2}" y="56" text-anchor="middle" font-size="9" font-family="Arial,sans-serif" fill="#9ca3af">Neutral</text>
+  <text x="${width-2}" y="56" text-anchor="end"    font-size="9" font-family="Arial,sans-serif" fill="#9ca3af">Positive</text>
+</svg>`;
+}
+
+function exportBarsSVG(rows, width = 380) {
+  if (!rows.length) return "";
+  const rowH = 24, labelW = 140, numW = 50;
+  const barMaxW = width - labelW - numW - 12;
+  const maxVal  = Math.max(...rows.map(r => r.value || 0), 1);
+  const total   = rows.reduce((s, r) => s + (r.value || 0), 0);
+  const svgH    = rows.length * rowH + 4;
+  const inner   = rows.map((r, i) => {
+    const barW = Math.max(2, ((r.value || 0) / maxVal) * barMaxW);
+    const pct  = total > 0 ? `${Math.round((r.value || 0) / total * 100)}%` : "";
+    const y    = i * rowH + 2;
+    return `<text x="0" y="${y + 14}" font-size="11" font-family="Arial,sans-serif" fill="#374151">${r.label}</text>
+  <rect x="${labelW}" y="${y + 2}" width="${barW}" height="16" rx="4" fill="${r.color || "#818cf8"}"/>
+  <text x="${labelW + barW + 5}" y="${y + 14}" font-size="10" font-family="Arial,sans-serif" fill="#6b7280">${r.value} ${pct}</text>`;
+  }).join("\n  ");
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${svgH}">\n  ${inner}\n</svg>`;
+}
+
+function exportDonutSVG(data, size = 160, thickness = 28) {
+  const cx = size / 2, cy = size / 2, r = (size - thickness) / 2;
+  const C  = 2 * Math.PI * r;
+  const total = data.reduce((s, d) => s + (d.value || 0), 0);
+  if (!total) return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#e5e7eb" stroke-width="${thickness}"/></svg>`;
+  let cum = 0;
+  const segs = data.map(d => {
+    const dash = ((d.value || 0) / total) * C;
+    const s = { ...d, dash, gap: C - dash, start: cum };
+    cum += dash;
+    return s;
+  });
+  const circles = segs.filter(s => s.value > 0).map(s =>
+    `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.color}" stroke-width="${thickness - 2}" stroke-dasharray="${s.dash.toFixed(1)} ${s.gap.toFixed(1)}" stroke-dashoffset="${(C - s.start).toFixed(1)}"/>`
+  ).join("\n  ");
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" style="transform:rotate(-90deg)">
+  <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#e5e7eb" stroke-width="${thickness}"/>
+  ${circles}
+</svg>`;
+}
+
+function exportSparklineSVG(runs, width = 200, height = 56) {
+  if (!runs || runs.length < 2) return "";
+  const pts  = [...runs].reverse();
+  const step = width / (pts.length - 1);
+  const points = pts.map((r, i) => {
+    const s = r.sentimentScore || 0;
+    const y = height / 2 - s * (height / 2 - 6);
+    return `${(i * step).toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+  <line x1="0" y1="${height/2}" x2="${width}" y2="${height/2}" stroke="#e5e7eb" stroke-width="1" stroke-dasharray="4,3"/>
+  <polyline points="${points}" fill="none" stroke="#818cf8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>`;
+}
+
+function exportSovDonutsHTML(sovColored, totalMedia, totalSocial) {
+  if (!sovColored.length) return "";
+  const hasSocial = sovColored.some(r => r.socialCount > 0);
+  const pressData  = sovColored.map(r => ({ value: r.mediaCount  || 0, color: r.color, name: r.name, isBase: r.isBase }));
+  const socialData = sovColored.map(r => ({ value: r.socialCount || 0, color: r.color, name: r.name, isBase: r.isBase }));
+  const legend = (data, total) => data.filter(d => d.value > 0).map(d =>
+    `<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+       <div style="width:10px;height:10px;border-radius:2px;background:${d.color};flex-shrink:0"></div>
+       <span style="font-size:11px;font-weight:${d.isBase?'700':'400'};color:#374151;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.name}${d.isBase?' ★':''}</span>
+       <span style="font-size:11px;color:#6b7280;margin-left:auto">${d.value}</span>
+       <span style="font-size:10px;color:#9ca3af;width:32px;text-align:right">${total > 0 ? Math.round(d.value/total*100)+'%' : '—'}</span>
+     </div>`
+  ).join("");
+  const colStyle = `style="flex:1;min-width:0;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:14px"`;
+  let html = `<div style="display:flex;gap:16px;margin:16px 0">
+  <div ${colStyle}>
+    <div style="font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:12px">Press Share of Voice</div>
+    <div style="display:flex;align-items:center;gap:16px">
+      <div style="position:relative;flex-shrink:0">${exportDonutSVG(pressData, 120, 22)}<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#111">${totalMedia}</div></div>
+      <div style="flex:1;min-width:0">${legend(pressData, totalMedia)}</div>
+    </div>
+  </div>`;
+  if (hasSocial) {
+    html += `
+  <div ${colStyle}>
+    <div style="font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:12px">Social Share of Voice</div>
+    <div style="display:flex;align-items:center;gap:16px">
+      <div style="position:relative;flex-shrink:0">${exportDonutSVG(socialData, 120, 22)}<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#111">${totalSocial}</div></div>
+      <div style="flex:1;min-width:0">${legend(socialData, totalSocial)}</div>
+    </div>
+  </div>`;
+  }
+  return html + "</div>";
+}
+
 // ── Company Detail — Briefing tab ─────────────────────────────────────────────
+
+// ── Briefing formatted text renderer ─────────────────────────────────────────
+
+function BriefingText({ text }) {
+  if (!text) return null;
+  return (
+    <div>
+      {text.split('\n').map((line, i) => {
+        const t = line.trim();
+        if (!t) return <div key={i} style={{ height:6 }} />;
+        // Numbered section headers (e.g. "1. COVERAGE OVERVIEW") or ALL-CAPS lines
+        if (/^\d+\.\s+[A-Z]/.test(t) || /^[A-Z][A-Z &\/().,\-]{6,}$/.test(t)) {
+          return <div key={i} style={{ fontSize:13, fontWeight:800, color:T.text, marginTop:18, marginBottom:4, paddingBottom:5, borderBottom:`1px solid ${T.border}`, letterSpacing:"0.02em" }}>{t}</div>;
+        }
+        // Subheadings with colon
+        if (/^[A-Z][A-Za-z ]{2,30}:$/.test(t)) {
+          return <div key={i} style={{ fontSize:12, fontWeight:700, color:T.text, marginTop:10, marginBottom:2 }}>{t}</div>;
+        }
+        // Bullets
+        if (t.startsWith('•') || t.startsWith('-') || t.startsWith('*')) {
+          return (
+            <div key={i} style={{ display:"flex", gap:8, marginTop:3 }}>
+              <span style={{ color:T.accent, flexShrink:0, fontWeight:700 }}>•</span>
+              <span style={{ fontSize:12, color:T.dim, lineHeight:1.68 }}>{t.replace(/^[•\-*]\s*/, "")}</span>
+            </div>
+          );
+        }
+        return <p key={i} style={{ fontSize:12, color:T.dim, lineHeight:1.72, margin:"3px 0" }}>{t}</p>;
+      })}
+    </div>
+  );
+}
 
 // ── Briefing data visualisation ───────────────────────────────────────────────
 
-function BriefingCharts({ company }) {
+function BriefingCharts({ company, persona = "exec" }) {
   const run = company.runs?.[0];
   if (!run) return null;
 
@@ -1107,8 +2008,15 @@ function BriefingCharts({ company }) {
   const maxPlat = Math.max(...platforms.map(p => p[1]), 1);
 
   const sov = company.sovRun;
-  const sovRows = sov?.results ? [...sov.results].sort((a, b) => (b.mediaCount||0) - (a.mediaCount||0)) : [];
-  const maxSov = Math.max(...sovRows.map(r => r.mediaCount || 0), 1);
+  const sovColored = (() => {
+    if (!sov?.results) return [];
+    let peer = 1;
+    return [...sov.results]
+      .sort((a,b) => (b.mediaCount||0)-(a.mediaCount||0))
+      .map(r => ({ ...r, color: r.isBase ? SOV_PALETTE[0] : SOV_PALETTE[peer++ % SOV_PALETTE.length] }));
+  })();
+  const maxSov = Math.max(...sovColored.map(r => r.mediaCount||0), 1);
+  const sovTotal = sovColored.reduce((s,r) => s+(r.mediaCount||0), 0);
 
   const Card = ({ title, children, style }) => (
     <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"14px 16px", ...style }}>
@@ -1139,10 +2047,11 @@ function BriefingCharts({ company }) {
             <span style={{ fontSize:11, color:T.faint, marginLeft:"auto" }}>{media.length} articles · {social.length} posts</span>
           </div>
           <div style={{ position:"relative", height:10, borderRadius:5, background:"linear-gradient(to right, #ef4444 0%, #f59e0b 50%, #22c55e 100%)" }}>
-            <div style={{ position:"absolute", left:`${sentPct}%`, top:"50%", transform:"translate(-50%,-50%)", width:16, height:16, borderRadius:"50%", background:"white", border:`2.5px solid ${sentColor}`, boxShadow:"0 1px 6px rgba(0,0,0,0.4)" }} />
+            <div style={{ position:"absolute", left:`${sentPct}%`, top:"50%", transform:"translate(-50%,-50%)", width:18, height:18, borderRadius:"50%", background:sentColor, border:`2.5px solid ${T.bg}`, boxShadow:"0 1px 6px rgba(0,0,0,0.5)" }} />
+            <div style={{ position:"absolute", left:`${sentPct}%`, top:"calc(100% + 5px)", transform:"translateX(-50%)", fontSize:9, fontWeight:700, color:sentColor, whiteSpace:"nowrap", background:T.bg, padding:"1px 4px", borderRadius:3, border:`1px solid ${sentColor}40` }}>{sent >= 0 ? "+" : ""}{sent.toFixed(2)}</div>
           </div>
-          <div style={{ display:"flex", justifyContent:"space-between", fontSize:9, color:T.faint, marginTop:5 }}>
-            <span>Very Negative</span><span>Neutral</span><span>Very Positive</span>
+          <div style={{ display:"flex", justifyContent:"space-between", fontSize:9, color:T.faint, marginTop:18 }}>
+            <span>Negative</span><span>Neutral</span><span>Positive</span>
           </div>
           {run.keyDrivers?.length > 0 && (
             <div style={{ marginTop:10, display:"flex", gap:5, flexWrap:"wrap" }}>
@@ -1190,9 +2099,9 @@ function BriefingCharts({ company }) {
         </Card>
       )}
 
-      {/* Row 3: Social + SOV side by side */}
-      {(platforms.length > 0 || sovRows.length > 0) && (
-        <div style={{ display:"grid", gridTemplateColumns:platforms.length > 0 && sovRows.length > 0 ? "1fr 1fr" : "1fr", gap:12 }}>
+      {/* Row 3: Social + SOV mini */}
+      {(platforms.length > 0 || sovColored.length > 0) && (
+        <div style={{ display:"grid", gridTemplateColumns:platforms.length > 0 && sovColored.length > 0 ? "1fr 1fr" : "1fr", gap:12 }}>
           {platforms.length > 0 && (
             <Card title="Social Platforms">
               {platforms.map(([plat, count]) => {
@@ -1201,22 +2110,146 @@ function BriefingCharts({ company }) {
               })}
             </Card>
           )}
-          {sovRows.length > 0 && (
-            <Card title={`Share of Voice vs Peers (${sov.ranAt?.slice(0,10)||"last run"})`}>
-              {sovRows.map(r => (
-                <div key={r.name} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
-                  <div style={{ width:110, fontSize:11, fontWeight:r.isBase?700:400, color:r.isBase?T.accent:T.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", flexShrink:0 }}>{r.name}</div>
-                  <div style={{ flex:1, height:7, background:T.ghost, borderRadius:4, overflow:"hidden" }}>
-                    <div style={{ height:"100%", width:`${Math.max(2,(r.mediaCount||0)/maxSov*100)}%`, background:r.isBase?T.accent:T.dim, borderRadius:4 }} />
-                  </div>
-                  <div style={{ width:26, textAlign:"right", fontSize:11, color:T.dim, flexShrink:0 }}>{r.mediaCount||0}</div>
-                  <Pip score={r.sentiment||0} size={9} />
+          {sovColored.length > 0 && (
+            <Card title={`Press Share of Voice (${sov.ranAt?.slice(0,10)||"last run"})`}>
+              <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+                <DonutChart size={80} thickness={16}
+                  data={sovColored.map(r => ({ value:r.mediaCount||0, color:r.color }))}
+                  centerLabel={<span style={{ fontSize:9, color:T.faint }}>{sovTotal}</span>}
+                />
+                <div style={{ flex:1, minWidth:0 }}>
+                  {sovColored.map(r => (
+                    <div key={r.name} style={{ display:"flex", alignItems:"center", gap:6, marginBottom:5 }}>
+                      <div style={{ width:8, height:8, borderRadius:2, background:r.color, flexShrink:0 }} />
+                      <div style={{ flex:1, fontSize:11, fontWeight:r.isBase?700:400, color:r.isBase?T.text:T.dim, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{r.name}</div>
+                      <span style={{ fontSize:10, color:T.dim, flexShrink:0 }}>{r.mediaCount||0}</span>
+                      <span style={{ fontSize:9, color:T.faint, width:30, textAlign:"right", flexShrink:0 }}>{sovTotal>0?`${Math.round((r.mediaCount||0)/sovTotal*100)}%`:"—"}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </div>
             </Card>
           )}
         </div>
       )}
+
+      {/* Row 4 (report persona only): Full SOV section with large donuts + sentiment comparison */}
+      {persona === "report" && sovColored.length > 0 && (() => {
+        const hasSoc = sovColored.some(r => r.socialCount > 0);
+        return (
+          <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"16px 20px" }}>
+            <div style={{ fontSize:11, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:14 }}>
+              Full Share of Voice Analysis — {sov.ranAt?.slice(0,10)||"last run"}
+            </div>
+
+            {/* Big donuts */}
+            <div style={{ display:"grid", gridTemplateColumns: hasSoc ? "1fr 1fr" : "1fr", gap:16, marginBottom:20 }}>
+              {/* Press SOV */}
+              <div style={{ background:T.ghost, borderRadius:10, padding:"14px 16px" }}>
+                <div style={{ fontSize:10, fontWeight:700, color:T.faint, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:12 }}>Press Share of Voice</div>
+                <div style={{ display:"flex", alignItems:"center", gap:16 }}>
+                  <DonutChart data={sovColored.map(r=>({value:r.mediaCount||0,color:r.color}))}
+                    centerLabel={<div style={{textAlign:"center"}}><div style={{fontSize:16,fontWeight:800,color:T.text}}>{sovTotal}</div><div style={{fontSize:8,color:T.faint}}>articles</div></div>} />
+                  <div style={{ flex:1, minWidth:0 }}>
+                    {sovColored.map(r => (
+                      <div key={r.name} style={{ display:"flex", alignItems:"center", gap:6, marginBottom:7 }}>
+                        <div style={{ width:10, height:10, borderRadius:2, background:r.color, flexShrink:0 }} />
+                        <span style={{ fontSize:11, fontWeight:r.isBase?700:400, color:r.isBase?T.text:T.dim, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.name}{r.isBase?" ★":""}</span>
+                        <span style={{ fontSize:11, color:T.dim, flexShrink:0 }}>{r.mediaCount||0}</span>
+                        <span style={{ fontSize:10, color:T.faint, width:34, textAlign:"right", flexShrink:0 }}>{sovTotal>0?`${Math.round((r.mediaCount||0)/sovTotal*100)}%`:"—"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {/* Social SOV */}
+              {hasSoc && (() => {
+                const socTotal = sovColored.reduce((s,r)=>s+(r.socialCount||0),0);
+                return (
+                  <div style={{ background:T.ghost, borderRadius:10, padding:"14px 16px" }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:T.faint, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:12 }}>Social Share of Voice</div>
+                    <div style={{ display:"flex", alignItems:"center", gap:16 }}>
+                      <DonutChart data={sovColored.map(r=>({value:r.socialCount||0,color:r.color}))}
+                        centerLabel={<div style={{textAlign:"center"}}><div style={{fontSize:16,fontWeight:800,color:T.text}}>{socTotal}</div><div style={{fontSize:8,color:T.faint}}>posts</div></div>} />
+                      <div style={{ flex:1, minWidth:0 }}>
+                        {[...sovColored].sort((a,b)=>(b.socialCount||0)-(a.socialCount||0)).map(r => (
+                          <div key={r.name} style={{ display:"flex", alignItems:"center", gap:6, marginBottom:7 }}>
+                            <div style={{ width:10, height:10, borderRadius:2, background:r.color, flexShrink:0 }} />
+                            <span style={{ fontSize:11, fontWeight:r.isBase?700:400, color:r.isBase?T.text:T.dim, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.name}{r.isBase?" ★":""}</span>
+                            <span style={{ fontSize:11, color:T.dim, flexShrink:0 }}>{r.socialCount||0}</span>
+                            <span style={{ fontSize:10, color:T.faint, width:34, textAlign:"right", flexShrink:0 }}>{socTotal>0?`${Math.round((r.socialCount||0)/socTotal*100)}%`:"—"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Sentiment comparison */}
+            <div style={{ marginBottom:16 }}>
+              <div style={{ fontSize:10, fontWeight:700, color:T.faint, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:10 }}>Sentiment Comparison</div>
+              {[...sovColored].sort((a,b)=>(b.sentiment||0)-(a.sentiment||0)).map(r => {
+                const s = r.sentiment || 0;
+                const pct = Math.abs(s) * 50;
+                const isPos = s >= 0;
+                return (
+                  <div key={r.name} style={{ display:"grid", gridTemplateColumns:"140px 1fr 80px", gap:8, alignItems:"center", marginBottom:8 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                      <div style={{ width:8, height:8, borderRadius:2, background:r.color, flexShrink:0 }} />
+                      <span style={{ fontSize:11, fontWeight:r.isBase?700:400, color:r.isBase?T.text:T.dim, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.name}</span>
+                    </div>
+                    <div style={{ position:"relative", height:8, background:T.ghost, borderRadius:4, overflow:"hidden" }}>
+                      <div style={{ position:"absolute", top:0, bottom:0, width:"1px", left:"50%", background:T.border }} />
+                      <div style={{ position:"absolute", top:1, bottom:1, borderRadius:3, background:r.color, left:isPos?"50%":`${50-pct}%`, width:`${pct}%`, minWidth:s!==0?3:0 }} />
+                    </div>
+                    <SentimentChip score={s} />
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Competitive matrix table */}
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                <thead>
+                  <tr style={{ borderBottom:`1px solid ${T.border}` }}>
+                    {["Company","Press","Press %","Social","Sentiment","Rank"].map(h => (
+                      <th key={h} style={{ textAlign:h==="Company"?"left":"right", padding:"5px 8px", fontSize:10, fontWeight:700, color:T.faint, textTransform:"uppercase", letterSpacing:"0.05em" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sovColored.map((r, i) => (
+                    <tr key={r.name} style={{ borderBottom:`1px solid ${T.border}18` }}>
+                      <td style={{ padding:"7px 8px" }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                          <div style={{ width:8, height:8, borderRadius:2, background:r.color }} />
+                          <span style={{ fontWeight:r.isBase?700:400, color:r.isBase?T.text:T.dim }}>{r.name}</span>
+                          {r.isBase && <span style={{ fontSize:9, padding:"1px 4px", borderRadius:3, background:`${T.accent}20`, color:T.accent }}>YOU</span>}
+                        </div>
+                      </td>
+                      <td style={{ textAlign:"right", padding:"7px 8px", fontWeight:600, color:T.text }}>{r.mediaCount||0}</td>
+                      <td style={{ textAlign:"right", padding:"7px 8px", color:T.dim }}>{sovTotal>0?`${Math.round((r.mediaCount||0)/sovTotal*100)}%`:"—"}</td>
+                      <td style={{ textAlign:"right", padding:"7px 8px", color:T.text }}>{r.socialCount||0}</td>
+                      <td style={{ textAlign:"right", padding:"7px 8px" }}><SentimentChip score={r.sentiment||0} /></td>
+                      <td style={{ textAlign:"right", padding:"7px 8px", color:T.faint, fontSize:10 }}>#{i+1}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {sov.aiSummary && (
+              <div style={{ marginTop:16, paddingTop:16, borderTop:`1px solid ${T.border}` }}>
+                <div style={{ fontSize:10, fontWeight:700, color:T.faint, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:8 }}>AI Competitive Analysis</div>
+                <div style={{ fontSize:12, color:T.dim, lineHeight:1.7, whiteSpace:"pre-wrap" }}>{sov.aiSummary}</div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1241,7 +2274,7 @@ function BriefingTab({ company, settings, onUpdate, toast }) {
     toast("Contact email saved", "success");
   };
 
-  const run = async () => {
+  const handleGenerate = async () => {
     setLoading(true);
     setBriefing("");
     try {
@@ -1251,37 +2284,175 @@ function BriefingTab({ company, settings, onUpdate, toast }) {
     setLoading(false);
   };
 
+  // ── Rich download: generates clean white HTML with embedded SVG charts ───────
   const handleDownload = () => {
     if (!briefing) return;
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${company.name} — ${personas.find(p=>p.id===persona)?.label || "Briefing"}</title>
-<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:800px;margin:40px auto;padding:0 24px;color:#1a1a1a;line-height:1.7}h1{font-size:22px;font-weight:800;margin-bottom:4px}pre{white-space:pre-wrap;font-family:inherit;font-size:14px}@media print{body{margin:20px}}</style>
+    const run  = company.runs?.[0];
+    const sov  = company.sovRun;
+    const sent = run?.sentimentScore || 0;
+    const media  = run?.mediaResults  || [];
+    const social = run?.socialResults || [];
+    const themes = run ? detectThemes(media) : [];
+
+    // Build SOV colored data
+    const sovColored = (() => {
+      if (!sov?.results) return [];
+      let peer = 1;
+      return [...sov.results].sort((a,b)=>(b.mediaCount||0)-(a.mediaCount||0))
+        .map(r => ({ ...r, color: r.isBase ? SOV_PALETTE[0] : SOV_PALETTE[peer++ % SOV_PALETTE.length] }));
+    })();
+    const sovTotal  = sovColored.reduce((s,r)=>s+(r.mediaCount||0),0);
+    const socTotal  = sovColored.reduce((s,r)=>s+(r.socialCount||0),0);
+
+    const t1 = media.filter(m=>m.tier===1).length;
+    const t2 = media.filter(m=>m.tier===2).length;
+    const t3 = media.filter(m=>m.tier===3).length;
+    const byPlat = {};
+    social.forEach(s => { byPlat[s.platform]=(byPlat[s.platform]||0)+1; });
+
+    // SVG charts
+    const sentSVG = run ? exportSentimentSVG(sent) : "";
+    const tierSVG = (t1||t2||t3) ? exportBarsSVG([
+      { label:"Tier 1 (flagship)", value:t1, color:"#818cf8" },
+      { label:"Tier 2 (major)",    value:t2, color:"#60a5fa" },
+      { label:"Tier 3 (trade)",    value:t3, color:"#94a3b8" },
+    ]) : "";
+    const themeSVG = themes.length ? exportBarsSVG(themes.slice(0,8).map(t=>({ label:t.label, value:t.articles.length, color:"#818cf8" }))) : "";
+    const platSVG  = Object.keys(byPlat).length ? exportBarsSVG(Object.entries(byPlat).sort((a,b)=>b[1]-a[1]).map(([p,n])=>({ label:p, value:n, color: PLAT[p]?.color||"#818cf8" }))) : "";
+    const sparkSVG = company.runs?.length > 1 ? exportSparklineSVG(company.runs) : "";
+    const sovHTML  = sovColored.length ? exportSovDonutsHTML(sovColored, sovTotal, socTotal) : "";
+
+    // SOV table HTML (for report persona)
+    const sovTableHTML = (persona === "report" && sovColored.length) ? `
+      <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px">
+        <thead><tr style="border-bottom:2px solid #e5e7eb">
+          ${["Company","Press","Press SOV","Social","Sentiment","#"].map(h=>`<th style="text-align:${h==="Company"?"left":"right"};padding:6px 8px;font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em">${h}</th>`).join("")}
+        </tr></thead>
+        <tbody>
+          ${sovColored.map((r,i)=>`<tr style="border-bottom:1px solid #f3f4f6">
+            <td style="padding:7px 8px"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${r.color};margin-right:6px"></span><strong style="color:${r.isBase?"#111":"#374151"}">${r.name}${r.isBase?" ★":""}</strong></td>
+            <td style="text-align:right;padding:7px 8px;font-weight:600">${r.mediaCount||0}</td>
+            <td style="text-align:right;padding:7px 8px;color:#6b7280">${sovTotal>0?Math.round((r.mediaCount||0)/sovTotal*100)+"%" : "—"}</td>
+            <td style="text-align:right;padding:7px 8px">${r.socialCount||0}</td>
+            <td style="text-align:right;padding:7px 8px"><span style="font-size:11px;font-weight:700;color:${r.sentiment>0.15?"#16a34a":r.sentiment<-0.15?"#dc2626":"#d97706"}">${(r.sentiment>=0?"+":"")}${(r.sentiment||0).toFixed(2)}</span></td>
+            <td style="text-align:right;padding:7px 8px;color:#9ca3af">#${i+1}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>` : "";
+
+    // Format briefing text to HTML
+    const textHTML = briefing.split('\n').map(line => {
+      const t = line.trim();
+      if (!t) return "<div style='height:8px'></div>";
+      if (/^\d+\.\s+[A-Z]/.test(t) || /^[A-Z][A-Z &\/().,\-]{6,}$/.test(t))
+        return `<h2 style="font-size:14px;font-weight:800;color:#111;margin:22px 0 6px;padding-bottom:5px;border-bottom:1px solid #e5e7eb">${t}</h2>`;
+      if (/^[A-Z][A-Za-z ]{2,30}:$/.test(t))
+        return `<h3 style="font-size:13px;font-weight:700;color:#374151;margin:14px 0 4px">${t}</h3>`;
+      if (t.startsWith('•') || t.startsWith('-') || t.startsWith('*'))
+        return `<div style="display:flex;gap:8px;margin:3px 0"><span style="color:#818cf8;font-weight:700;flex-shrink:0">•</span><span style="font-size:12px;color:#374151;line-height:1.7">${t.replace(/^[•\-*]\s*/,"")}</span></div>`;
+      return `<p style="font-size:12px;color:#374151;line-height:1.75;margin:3px 0">${t}</p>`;
+    }).join("\n");
+
+    const personaLabel = personas.find(p=>p.id===persona)?.label || "Briefing";
+    const dateStr = new Date().toLocaleDateString("en-US", { month:"long", day:"numeric", year:"numeric" });
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>${persona === "report" ? `${company.name} - Radical Brand Intelligence Report` : `${company.name} — ${personaLabel}`}</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; max-width: 820px; margin: 40px auto; padding: 0 28px; color: #111; background: #fff; }
+  @media print { body { margin: 20px; } .no-print { display: none; } }
+  .section-label { font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 10px; }
+  .chart-card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
+  .chart-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .chart-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  svg text { paint-order: stroke fill; }
+</style>
 </head><body>
-<h1>${company.name}</h1>
-<p style="color:#6b7280;font-size:13px;margin-top:0">${personas.find(p=>p.id===persona)?.label} · ${new Date().toLocaleDateString("en-CA")}</p>
-<pre>${briefing.replace(/</g,"&lt;")}</pre>
+
+<!-- Report header -->
+<div style="border-bottom:2px solid #111;padding-bottom:16px;margin-bottom:24px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between">
+    <div>
+      <h1 style="font-size:24px;font-weight:900;margin:0;letter-spacing:-0.03em">${persona === "report" ? `${company.name} - Radical Brand Intelligence Report` : company.name}</h1>
+      <p style="color:#6b7280;font-size:13px;margin:4px 0 0">${persona === "report" ? `Prepared by Radical Ventures · ${dateStr}` : `${personaLabel} · Prepared by Radical Ventures · ${dateStr}`}</p>
+    </div>
+    <div style="text-align:right;font-size:11px;color:#9ca3af">
+      ${run ? `${media.length} articles · ${social.length} posts` : "No run data"}
+      ${run ? `<br>${run.fromDate||""} → ${run.ranAt?.slice(0,10)||""}` : ""}
+    </div>
+  </div>
+</div>
+
+<!-- Data visualisations -->
+<div style="margin-bottom:28px">
+  <h2 style="font-size:13px;font-weight:800;color:#111;margin:0 0 14px;text-transform:uppercase;letter-spacing:0.05em">Coverage Data</h2>
+
+  ${sentSVG ? `
+  <div class="chart-card">
+    <div class="section-label">Overall Sentiment</div>
+    <div style="display:flex;align-items:center;gap:16px">
+      <div style="font-size:32px;font-weight:900;color:${sent>0.2?"#16a34a":sent<-0.2?"#dc2626":"#d97706"};letter-spacing:-0.04em">${sent>=0?"+":""}${sent.toFixed(2)}</div>
+      <div style="flex:1">${sentSVG}${sparkSVG ? `<div style="margin-top:6px"><div class="section-label">Sentiment trend</div>${sparkSVG}</div>` : ""}</div>
+    </div>
+    ${run?.keyDrivers?.length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">${run.keyDrivers.map(d=>`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#ede9fe;color:#7c3aed;font-weight:600">${d}</span>`).join("")}</div>` : ""}
+  </div>` : ""}
+
+  ${(tierSVG || platSVG) ? `
+  <div class="${tierSVG && platSVG ? "chart-grid-2" : ""}">
+    ${tierSVG ? `<div class="chart-card"><div class="section-label">Outlet Tiers</div>${tierSVG}</div>` : ""}
+    ${platSVG ? `<div class="chart-card"><div class="section-label">Social Platforms</div>${platSVG}</div>` : ""}
+  </div>` : ""}
+
+  ${themeSVG ? `
+  <div class="chart-card">
+    <div class="section-label">Coverage Themes (${themes.length} detected)</div>
+    ${themeSVG}
+  </div>` : ""}
+</div>
+
+${sovHTML || sovTableHTML ? `
+<!-- Share of Voice -->
+<div style="margin-bottom:28px">
+  <h2 style="font-size:13px;font-weight:800;color:#111;margin:0 0 14px;text-transform:uppercase;letter-spacing:0.05em">Share of Voice Analysis</h2>
+  ${sovHTML}
+  ${sovTableHTML ? `<div class="chart-card" style="margin-top:14px"><div class="section-label">Competitive Matrix</div>${sovTableHTML}</div>` : ""}
+  ${sov?.aiSummary ? `<div class="chart-card" style="margin-top:14px"><div class="section-label">AI Competitive Analysis</div><p style="font-size:12px;color:#374151;line-height:1.75;white-space:pre-wrap;margin:0">${sov.aiSummary.replace(/</g,"&lt;")}</p></div>` : ""}
+</div>
+` : ""}
+
+<!-- AI-generated text -->
+<div style="margin-bottom:28px">
+  <h2 style="font-size:13px;font-weight:800;color:#111;margin:0 0 14px;text-transform:uppercase;letter-spacing:0.05em">${personaLabel}</h2>
+  ${textHTML}
+</div>
+
+<div style="margin-top:32px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:10px;color:#9ca3af">
+  Generated by Radical Intelligence Platform · Radical Ventures · ${dateStr}
+</div>
+
 </body></html>`;
+
     const w = window.open("", "_blank");
-    if (!w) { toast("Pop-up blocked — allow pop-ups to download", "error"); return; }
+    if (!w) { toast("Pop-up blocked — allow pop-ups to use Download", "error"); return; }
     w.document.write(html);
     w.document.close();
     w.focus();
-    setTimeout(() => w.print(), 500);
+    setTimeout(() => w.print(), 600);
   };
 
   const handleEmail = () => {
     if (!briefing) return;
     const subject = encodeURIComponent(`${company.name} — ${personas.find(p=>p.id===persona)?.label}`);
-    const body = encodeURIComponent(briefing.slice(0, 1800) + (briefing.length > 1800 ? "\n\n[Full report available via download]" : ""));
+    const body = encodeURIComponent(briefing.slice(0, 1800) + (briefing.length > 1800 ? "\n\n[Full report with charts available via Download]" : ""));
     const to = encodeURIComponent(contactEmail || "");
     window.location.href = `mailto:${to}?subject=${subject}&body=${body}`;
   };
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
-      {/* Data charts — always visible when run data exists */}
-      <BriefingCharts company={company} />
 
-      {/* Contact email (shown for report persona) */}
+      {/* Contact email (report persona) */}
       {persona === "report" && (
         <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"14px 18px" }}>
           <div style={{ fontSize:12, fontWeight:600, color:T.text, marginBottom:8 }}>Contact at {company.name}</div>
@@ -1298,32 +2469,59 @@ function BriefingTab({ company, settings, onUpdate, toast }) {
       {/* Persona selector */}
       <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
         {personas.map(p => (
-          <button key={p.id} onClick={() => setPersona(p.id)} style={{ padding:"8px 14px", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer", border:`1px solid ${persona===p.id ? T.accent+"80" : T.border}`, background:persona===p.id ? T.accentDim : "transparent", color:persona===p.id ? T.accent : T.dim, textAlign:"left" }}>
+          <button key={p.id} onClick={() => { setPersona(p.id); setBriefing(""); }}
+            style={{ padding:"8px 14px", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer", border:`1px solid ${persona===p.id ? T.accent+"80" : T.border}`, background:persona===p.id ? T.accentDim : "transparent", color:persona===p.id ? T.accent : T.dim, textAlign:"left" }}>
             <div>{p.label}</div>
             <div style={{ fontSize:10, fontWeight:400, opacity:0.7, marginTop:2 }}>{p.desc}</div>
           </button>
         ))}
       </div>
 
-      <Btn onClick={run} disabled={loading} variant="primary" style={{ width:"fit-content", padding:"8px 20px", fontSize:13 }}>
+      <Btn onClick={handleGenerate} disabled={loading} variant="primary" style={{ width:"fit-content", padding:"8px 20px", fontSize:13 }}>
         {loading ? <><Spinner /> Generating…</> : "✦ Generate briefing"}
       </Btn>
 
+      {/* Generated report output */}
       {briefing && (
-        <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"20px 24px" }}>
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16, gap:10, flexWrap:"wrap" }}>
-            <div style={{ fontSize:13, fontWeight:700, color:T.text }}>{personas.find(p=>p.id===persona)?.label}</div>
-            <div style={{ display:"flex", gap:8 }}>
-              <Btn variant="ghost" onClick={handleDownload} style={{ fontSize:11 }}>⬇ Download PDF</Btn>
-              <Btn variant="ghost" onClick={handleEmail} style={{ fontSize:11 }}>✉ Email</Btn>
+        <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"22px 26px" }}>
+          {/* Report header */}
+          <div style={{ borderBottom:`1px solid ${T.border}`, paddingBottom:14, marginBottom:20 }}>
+            <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
+              <div>
+                <div style={{ fontSize:18, fontWeight:900, color:T.text, letterSpacing:"-0.02em" }}>{company.name}</div>
+                <div style={{ fontSize:11, color:T.faint, marginTop:3 }}>{personas.find(p=>p.id===persona)?.label} · Radical Ventures · {new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}</div>
+              </div>
+              <div style={{ display:"flex", gap:8, flexShrink:0 }}>
+                <Btn variant="ghost" onClick={handleDownload} style={{ fontSize:11 }}>⬇ Download</Btn>
+                <Btn variant="ghost" onClick={handleEmail}    style={{ fontSize:11 }}>✉ Email</Btn>
+              </div>
             </div>
           </div>
-          <pre style={{ whiteSpace:"pre-wrap", fontSize:13, color:T.text, lineHeight:1.7, fontFamily:"inherit", margin:0 }}>{briefing}</pre>
+
+          {/* Inline charts (always shown in report output) */}
+          <div style={{ marginBottom:20 }}>
+            <BriefingCharts company={company} persona={persona} />
+          </div>
+
+          {/* AI text — formatted */}
+          <div style={{ borderTop:`1px solid ${T.border}`, paddingTop:18 }}>
+            <div style={{ fontSize:10, fontWeight:700, color:T.faint, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:14 }}>
+              {personas.find(p=>p.id===persona)?.label}
+            </div>
+            <BriefingText text={briefing} />
+          </div>
         </div>
       )}
-      {!briefing && !loading && (
-        <div style={{ textAlign:"center", padding:"40px 0", color:T.faint, fontSize:12 }}>
-          {company.runs?.[0] ? "Select a persona and generate a briefing" : "Run a search first to get coverage data"}
+
+      {/* Empty state / context charts */}
+      {!briefing && (
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          <BriefingCharts company={company} persona={persona} />
+          {!loading && (
+            <div style={{ textAlign:"center", padding:"20px 0", color:T.faint, fontSize:12 }}>
+              {company.runs?.[0] ? "Select a persona above and generate a briefing" : "Run a data fetch first to enable briefings"}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1374,10 +2572,151 @@ function CompanyDetail({ company, settings, onBack, onRun, onUpdate, onUpdateSet
     bustCompanyCache(company.name);
   };
 
+  const handleCompanyDownload = () => {
+    if (!run) return;
+    const dateStr = new Date().toLocaleDateString("en-US", { month:"long", day:"numeric", year:"numeric" });
+    const sent   = run.sentimentScore || 0;
+    const media  = run.mediaResults  || [];
+    const social = run.socialResults || [];
+    const themes = detectThemes(media);
+    const sov    = company.sovRun;
+
+    const t1 = media.filter(m => m.tier === 1).length;
+    const t2 = media.filter(m => m.tier === 2).length;
+    const t3 = media.filter(m => m.tier === 3).length;
+    const byPlat = {};
+    social.forEach(s => { byPlat[s.platform] = (byPlat[s.platform] || 0) + 1; });
+
+    const sentSVG  = exportSentimentSVG(sent);
+    const tierSVG  = (t1||t2||t3) ? exportBarsSVG([
+      { label:"Tier 1 (flagship)", value:t1, color:"#818cf8" },
+      { label:"Tier 2 (major)",    value:t2, color:"#60a5fa" },
+      { label:"Tier 3 (trade)",    value:t3, color:"#94a3b8" },
+    ]) : "";
+    const themeSVG = themes.length ? exportBarsSVG(themes.slice(0,8).map(t=>({ label:t.label, value:t.articles.length, color:"#818cf8" }))) : "";
+    const platSVG  = Object.keys(byPlat).length ? exportBarsSVG(Object.entries(byPlat).sort((a,b)=>b[1]-a[1]).map(([p,n])=>({ label:p, value:n, color: PLAT[p]?.color||"#818cf8" }))) : "";
+    const sparkSVG = company.runs?.length > 1 ? exportSparklineSVG(company.runs) : "";
+
+    // SOV
+    const sovColored = (() => {
+      if (!sov?.results) return [];
+      let peer = 1;
+      return [...sov.results].sort((a,b)=>(b.mediaCount||0)-(a.mediaCount||0))
+        .map(r => ({ ...r, color: r.isBase ? SOV_PALETTE[0] : SOV_PALETTE[peer++ % SOV_PALETTE.length] }));
+    })();
+    const sovTotal = sovColored.reduce((s,r)=>s+(r.mediaCount||0),0);
+    const socTotal = sovColored.reduce((s,r)=>s+(r.socialCount||0),0);
+    const sovHTML  = sovColored.length ? exportSovDonutsHTML(sovColored, sovTotal, socTotal) : "";
+    const sovTableHTML = sovColored.length ? `
+      <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px">
+        <thead><tr style="border-bottom:2px solid #e5e7eb">
+          ${["Company","Press","Press SOV","Social","Sentiment","#"].map(h=>`<th style="text-align:${h==="Company"?"left":"right"};padding:6px 8px;font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em">${h}</th>`).join("")}
+        </tr></thead>
+        <tbody>
+          ${sovColored.map((r,i)=>`<tr style="border-bottom:1px solid #f3f4f6">
+            <td style="padding:7px 8px"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${r.color};margin-right:6px"></span><strong style="color:${r.isBase?"#111":"#374151"}">${r.name}${r.isBase?" ★":""}</strong></td>
+            <td style="text-align:right;padding:7px 8px;font-weight:600">${r.mediaCount||0}</td>
+            <td style="text-align:right;padding:7px 8px;color:#6b7280">${sovTotal>0?Math.round((r.mediaCount||0)/sovTotal*100)+"%" : "—"}</td>
+            <td style="text-align:right;padding:7px 8px">${r.socialCount||0}</td>
+            <td style="text-align:right;padding:7px 8px"><span style="font-size:11px;font-weight:700;color:${r.sentiment>0.15?"#16a34a":r.sentiment<-0.15?"#dc2626":"#d97706"}">${(r.sentiment>=0?"+":"")}${(r.sentiment||0).toFixed(2)}</span></td>
+            <td style="text-align:right;padding:7px 8px;color:#9ca3af">#${i+1}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>` : "";
+
+    const topArticles = media.slice(0, 10);
+    const articlesHTML = topArticles.map(a => `
+      <div style="padding:10px 0;border-bottom:1px solid #f3f4f6">
+        <div style="font-size:12px;font-weight:700;color:#111;margin-bottom:3px">${(a.title||"Untitled").replace(/</g,"&lt;")}</div>
+        <div style="font-size:11px;color:#6b7280">${a.source?.name||a.source||""} ${a.publishedAt?"· "+a.publishedAt.slice(0,10):""} ${a.url?`· <a href="${a.url}" style="color:#818cf8">${a.url.replace(/^https?:\/\/(www\.)?/,"").split("/")[0]}</a>`:""}</div>
+      </div>`).join("");
+
+    const sentColor = sent > 0.2 ? "#16a34a" : sent < -0.2 ? "#dc2626" : "#d97706";
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>${company.name} - Radical Brand Intelligence Report</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; max-width: 820px; margin: 40px auto; padding: 0 28px; color: #111; background: #fff; }
+  @media print { body { margin: 20px; } }
+  .section-label { font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 10px; }
+  .chart-card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
+  .chart-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  svg text { paint-order: stroke fill; }
+</style>
+</head><body>
+
+<div style="border-bottom:2px solid #111;padding-bottom:16px;margin-bottom:24px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between">
+    <div>
+      <h1 style="font-size:24px;font-weight:900;margin:0;letter-spacing:-0.03em">${company.name} - Radical Brand Intelligence Report</h1>
+      <p style="color:#6b7280;font-size:13px;margin:4px 0 0">Prepared by Radical Ventures · ${dateStr}</p>
+      ${company.description ? `<p style="color:#374151;font-size:12px;margin:6px 0 0">${company.description.replace(/</g,"&lt;")}</p>` : ""}
+    </div>
+    <div style="text-align:right;font-size:11px;color:#9ca3af">
+      ${media.length} articles · ${social.length} posts<br>
+      ${run.fromDate||""} → ${run.ranAt?.slice(0,10)||""}
+    </div>
+  </div>
+  ${(company.categories||[]).length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+    ${(company.categories||[]).map(c=>`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#ede9fe;color:#7c3aed;font-weight:600">${c}</span>`).join("")}
+  </div>` : ""}
+</div>
+
+<div style="margin-bottom:28px">
+  <h2 style="font-size:13px;font-weight:800;color:#111;margin:0 0 14px;text-transform:uppercase;letter-spacing:0.05em">Coverage Data</h2>
+
+  ${sentSVG ? `<div class="chart-card">
+    <div class="section-label">Overall Sentiment</div>
+    <div style="display:flex;align-items:center;gap:16px">
+      <div style="font-size:32px;font-weight:900;color:${sentColor};letter-spacing:-0.04em">${sent>=0?"+":""}${sent.toFixed(2)}</div>
+      <div style="flex:1">${sentSVG}${sparkSVG?`<div style="margin-top:6px"><div class="section-label">Sentiment trend</div>${sparkSVG}</div>`:""}</div>
+    </div>
+    ${run.keyDrivers?.length?`<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">${run.keyDrivers.map(d=>`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#ede9fe;color:#7c3aed;font-weight:600">${d}</span>`).join("")}</div>`:""}
+  </div>` : ""}
+
+  ${(tierSVG||platSVG) ? `<div class="${tierSVG&&platSVG?"chart-grid-2":""}">
+    ${tierSVG?`<div class="chart-card"><div class="section-label">Outlet Tiers</div>${tierSVG}</div>`:""}
+    ${platSVG?`<div class="chart-card"><div class="section-label">Social Platforms</div>${platSVG}</div>`:""}
+  </div>` : ""}
+
+  ${themeSVG ? `<div class="chart-card">
+    <div class="section-label">Coverage Themes (${themes.length} detected)</div>
+    ${themeSVG}
+  </div>` : ""}
+</div>
+
+${sovHTML||sovTableHTML ? `<div style="margin-bottom:28px">
+  <h2 style="font-size:13px;font-weight:800;color:#111;margin:0 0 14px;text-transform:uppercase;letter-spacing:0.05em">Share of Voice Analysis</h2>
+  ${sovHTML}
+  ${sovTableHTML?`<div class="chart-card" style="margin-top:14px"><div class="section-label">Competitive Matrix</div>${sovTableHTML}</div>`:""}
+  ${sov?.aiSummary?`<div class="chart-card" style="margin-top:14px"><div class="section-label">AI Competitive Analysis</div><p style="font-size:12px;color:#374151;line-height:1.75;white-space:pre-wrap;margin:0">${sov.aiSummary.replace(/</g,"&lt;")}</p></div>`:""}
+</div>` : ""}
+
+${articlesHTML ? `<div style="margin-bottom:28px">
+  <h2 style="font-size:13px;font-weight:800;color:#111;margin:0 0 14px;text-transform:uppercase;letter-spacing:0.05em">Top Articles</h2>
+  <div class="chart-card" style="padding:0 18px">${articlesHTML}</div>
+</div>` : ""}
+
+<div style="margin-top:32px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:10px;color:#9ca3af">
+  Generated by Radical Intelligence Platform · Radical Ventures · ${dateStr}
+</div>
+
+</body></html>`;
+
+    const w = window.open("", "_blank");
+    if (!w) { toast("Pop-up blocked — allow pop-ups to use Download", "error"); return; }
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 600);
+  };
+
   const tabs = [
     { id:"overview", label:"Overview" },
     { id:"sov",      label:"Share of Voice" },
     { id:"briefing", label:"AI Briefing" },
+    { id:"ask",      label:"✦ Ask AI" },
   ];
 
   return (
@@ -1423,6 +2762,9 @@ function CompanyDetail({ company, settings, onBack, onRun, onUpdate, onUpdateSet
             <select value={dateRange} onChange={e => setDateRange(e.target.value)} style={{ background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"6px 10px", fontSize:12, color:T.text, outline:"none" }}>
               {DATE_RANGES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
             </select>
+            {run && (
+              <Btn onClick={handleCompanyDownload} variant="ghost" style={{ fontSize:11, padding:"6px 12px" }}>⬇ Download</Btn>
+            )}
             <Btn onClick={handleRun} disabled={running} variant="primary" style={{ padding:"6px 16px", fontSize:13 }}>
               {running ? <><Spinner /> {progress || "Running…"}</> : "▶ Run Search"}
             </Btn>
@@ -1468,6 +2810,7 @@ function CompanyDetail({ company, settings, onBack, onRun, onUpdate, onUpdateSet
       {tab === "overview" && <OverviewTab company={company} run={run} />}
       {tab === "sov"      && <SOVTab company={company} settings={settings} onUpdate={onUpdate} toast={toast} />}
       {tab === "briefing" && <BriefingTab company={company} settings={settings} onUpdate={onUpdate} toast={toast} />}
+      {tab === "ask"      && <AskAITab company={company} settings={settings} />}
     </div>
   );
 }
@@ -1486,9 +2829,17 @@ function Admin({ settings, outlets, companies, onUpdateSettings, onUpdateOutlets
   const setDateRange = v => onUpdateSettings({ ...settings, dateRange: v });
 
   const monthKey = new Date().toISOString().slice(0, 7);
-  const twitterSpentThisMonth = (settings.twitterSpend || {})[monthKey] || 0;
+  const twitterSpend = settings.twitterSpend || {};
+  const twitterSpentThisMonth = twitterSpend[monthKey] || 0;
   const twitterBudget = features.twitterBudgetMonthly || 10;
   const twitterBudgetPct = Math.min(100, (twitterSpentThisMonth / twitterBudget) * 100);
+  const twitterCreditBalance = settings.twitterCreditBalance ?? 20;
+  const twitterAllTimeSpend = Object.values(twitterSpend).reduce((s, v) => s + v, 0);
+  const twitterCreditsRemaining = Math.max(0, twitterCreditBalance - twitterAllTimeSpend);
+  const twitterCreditPct = twitterCreditBalance > 0 ? Math.min(100, (twitterAllTimeSpend / twitterCreditBalance) * 100) : 0;
+  const twitterRunLog = settings.twitterRunLog || [];
+  const costPerRun = (features.twitterMaxPages || 3) * 20 * 0.00015;
+  const runsRemaining = twitterCreditsRemaining > 0 ? Math.floor(twitterCreditsRemaining / costPerRun) : 0;
 
   const API_KEYS_CONFIG = [
     { group:"News", keys:[
@@ -1527,35 +2878,61 @@ function Admin({ settings, outlets, companies, onUpdateSettings, onUpdateOutlets
     return list;
   }, [outlets, outletSearch, outletTier]);
 
-  const handleExport = () => {
-    const data = JSON.stringify({ exportedAt: new Date().toISOString(), companies, outlets, settings }, null, 2);
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([data], { type:"application/json" }));
-    a.download = `radical-export-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-  };
-
-  const handleImport = e => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      try {
-        const d = JSON.parse(ev.target.result);
-        if (d.companies) onUpdateCompanies(d.companies);
-        if (d.outlets) onUpdateOutlets(d.outlets);
-        if (d.settings) onUpdateSettings(d.settings);
-        toast("Import successful", "success");
-      } catch { toast("Import failed — invalid file", "error"); }
-    };
-    reader.readAsText(file);
-  };
-
   const handleReset = () => {
     if (confirm("Reset ALL data including companies, runs, and API keys? This cannot be undone.")) {
       localStorage.removeItem(STORAGE_KEY);
       window.location.reload();
     }
+  };
+
+  const handleExport = () => {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) { toast("No data to export", "error"); return; }
+    // Strip run results to keep the file small — only keep config (companies list, boolean queries, competitors, settings)
+    const state = JSON.parse(raw);
+    const exportData = {
+      ...state,
+      companies: (state.companies || []).map(c => ({
+        ...c,
+        runs: (c.runs || []).map((r, i) => i === 0
+          ? { ...r, mediaResults: [], socialResults: [] }   // keep metadata, drop results
+          : { ranAt: r.ranAt, mediaCount: r.mediaCount, socialCount: r.socialCount, sentimentScore: r.sentimentScore }
+        ),
+        sovRun: c.sovRun ? { ...c.sovRun, results: c.sovRun.results || [] } : null,
+      })),
+      _exportedAt: new Date().toISOString(),
+      _version: STORAGE_KEY,
+    };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `radical-data-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast("Data exported — save this file to back up your configuration", "success");
+  };
+
+  const handleImport = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const imported = JSON.parse(ev.target.result);
+        if (!imported.companies || !Array.isArray(imported.companies)) {
+          toast("Invalid file — missing companies array", "error"); return;
+        }
+        if (confirm(`Import data from ${file.name}? This will replace your current configuration.`)) {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(imported));
+          window.location.reload();
+        }
+      } catch {
+        toast("Could not parse file — make sure it's a valid Radical export", "error");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
   };
 
   const adminTabs = ["keys","features","outlets","data"];
@@ -1638,39 +3015,113 @@ function Admin({ settings, outlets, companies, onUpdateSettings, onUpdateOutlets
                 </label>
               </div>
 
-              {/* Budget & spend */}
-              <div style={{ borderTop:`1px solid ${T.border}`, paddingTop:12, display:"flex", gap:20, flexWrap:"wrap", alignItems:"center" }}>
-                <div>
-                  <div style={{ fontSize:11, color:T.dim, marginBottom:4 }}>Monthly budget cap</div>
-                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                    <span style={{ fontSize:13, color:T.faint }}>$</span>
-                    <input type="number" min="0" step="5" value={features.twitterBudgetMonthly ?? 10}
-                      onChange={e => setFeature("twitterBudgetMonthly", parseFloat(e.target.value) || 0)}
-                      style={{ width:70, background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"5px 8px", fontSize:12, color:T.text, outline:"none" }}
+              {/* API Cost Tracker */}
+              <div style={{ borderTop:`1px solid ${T.border}`, paddingTop:14, display:"flex", flexDirection:"column", gap:14 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:"0.08em" }}>API Cost Tracker</div>
+
+                {/* Credit balance + all-time bar */}
+                <div style={{ background:"rgba(0,0,0,0.2)", borderRadius:10, padding:"12px 16px", display:"flex", flexDirection:"column", gap:8 }}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
+                    <div>
+                      <div style={{ fontSize:11, color:T.dim, marginBottom:3 }}>Credit balance loaded into account</div>
+                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        <span style={{ fontSize:13, color:T.faint }}>$</span>
+                        <input type="number" min="0" step="5" value={twitterCreditBalance}
+                          onChange={e => onUpdateSettings({ ...settings, twitterCreditBalance: parseFloat(e.target.value) || 0 })}
+                          style={{ width:80, background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"5px 8px", fontSize:13, fontWeight:700, color:T.text, outline:"none" }}
+                        />
+                        <span style={{ fontSize:11, color:T.faint }}>USD</span>
+                        <a href="https://twitterapi.io/payment" target="_blank" rel="noopener noreferrer"
+                          style={{ fontSize:10, color:T.accent, textDecoration:"none", marginLeft:4 }}>Top up ↗</a>
+                      </div>
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ fontSize:11, color:T.dim }}>Estimated remaining</div>
+                      <div style={{ fontSize:22, fontWeight:800, color: twitterCreditsRemaining < twitterCreditBalance * 0.2 ? "#f87171" : twitterCreditsRemaining < twitterCreditBalance * 0.5 ? "#fbbf24" : "#4ade80" }}>
+                        ${twitterCreditsRemaining.toFixed(2)}
+                      </div>
+                      <div style={{ fontSize:10, color:T.faint }}>~{runsRemaining.toLocaleString()} full runs left</div>
+                    </div>
+                  </div>
+                  {/* All-time spend bar */}
+                  <div>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                      <span style={{ fontSize:10, color:T.dim }}>All-time spend: ${twitterAllTimeSpend.toFixed(4)}</span>
+                      <span style={{ fontSize:10, color:T.dim }}>{twitterCreditPct.toFixed(1)}% of balance used</span>
+                    </div>
+                    <div style={{ height:5, borderRadius:3, background:T.ghost, overflow:"hidden" }}>
+                      <div style={{ height:"100%", width:`${twitterCreditPct}%`, background: twitterCreditPct > 80 ? "#f87171" : twitterCreditPct > 50 ? "#fbbf24" : "#4ade80", borderRadius:3, transition:"width 0.5s" }} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* This month + controls row */}
+                <div style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"flex-start" }}>
+                  <div style={{ flex:"1 1 180px" }}>
+                    <div style={{ fontSize:11, color:T.dim, marginBottom:4 }}>This month ({monthKey})</div>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                      <span style={{ fontSize:12, fontWeight:700, color: twitterBudgetPct > 80 ? "#f87171" : twitterBudgetPct > 50 ? "#fbbf24" : T.text }}>${twitterSpentThisMonth.toFixed(4)}</span>
+                      <span style={{ fontSize:11, color:T.dim }}>/ ${twitterBudget} cap</span>
+                    </div>
+                    <div style={{ height:5, borderRadius:3, background:T.ghost, overflow:"hidden" }}>
+                      <div style={{ height:"100%", width:`${twitterBudgetPct}%`, background: twitterBudgetPct > 80 ? "#f87171" : twitterBudgetPct > 50 ? "#fbbf24" : T.accent, borderRadius:3, transition:"width 0.4s" }} />
+                    </div>
+                    {twitterBudgetPct >= 100 && <div style={{ fontSize:10, color:"#f87171", marginTop:4 }}>Monthly cap reached — increase cap or wait until next month</div>}
+                  </div>
+                  <div>
+                    <div style={{ fontSize:11, color:T.dim, marginBottom:4 }}>Monthly cap</div>
+                    <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                      <span style={{ fontSize:12, color:T.faint }}>$</span>
+                      <input type="number" min="0" step="5" value={features.twitterBudgetMonthly ?? 10}
+                        onChange={e => setFeature("twitterBudgetMonthly", parseFloat(e.target.value) || 0)}
+                        style={{ width:65, background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"5px 8px", fontSize:12, color:T.text, outline:"none" }}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize:11, color:T.dim, marginBottom:4 }}>Pages / run</div>
+                    <input type="number" min="1" max="10" step="1" value={features.twitterMaxPages ?? 3}
+                      onChange={e => setFeature("twitterMaxPages", parseInt(e.target.value) || 3)}
+                      style={{ width:55, background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"5px 8px", fontSize:12, color:T.text, outline:"none" }}
                     />
-                    <span style={{ fontSize:11, color:T.faint }}>/ month</span>
+                    <div style={{ fontSize:10, color:T.faint, marginTop:3 }}>~${costPerRun.toFixed(4)} / co.</div>
                   </div>
                 </div>
-                <div>
-                  <div style={{ fontSize:11, color:T.dim, marginBottom:4 }}>Pages per run (20 tweets each)</div>
-                  <input type="number" min="1" max="10" step="1" value={features.twitterMaxPages ?? 3}
-                    onChange={e => setFeature("twitterMaxPages", parseInt(e.target.value) || 3)}
-                    style={{ width:60, background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"5px 8px", fontSize:12, color:T.text, outline:"none" }}
-                  />
-                  <div style={{ fontSize:10, color:T.faint, marginTop:3 }}>~${((features.twitterMaxPages ?? 3) * 20 * 0.00015).toFixed(4)} / run</div>
-                </div>
-                <div style={{ flex:"1 1 200px" }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                    <span style={{ fontSize:11, color:T.dim }}>Spent this month ({monthKey})</span>
-                    <span style={{ fontSize:11, fontWeight:700, color:twitterBudgetPct > 80 ? "#f87171" : twitterBudgetPct > 50 ? "#fbbf24" : T.text }}>
-                      ${twitterSpentThisMonth.toFixed(4)} / ${twitterBudget}
-                    </span>
+
+                {/* Monthly spend history */}
+                {Object.keys(twitterSpend).length > 0 && (
+                  <div>
+                    <div style={{ fontSize:11, color:T.dim, marginBottom:6 }}>Monthly spend history</div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
+                      {Object.entries(twitterSpend).sort((a,b) => b[0].localeCompare(a[0])).map(([month, spent]) => (
+                        <div key={month} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                          <span style={{ fontSize:11, color:T.dim, width:60, flexShrink:0 }}>{month}</span>
+                          <div style={{ flex:1, height:4, borderRadius:2, background:T.ghost, overflow:"hidden" }}>
+                            <div style={{ height:"100%", width:`${Math.min(100,(spent/twitterBudget)*100)}%`, background:T.accent, borderRadius:2 }} />
+                          </div>
+                          <span style={{ fontSize:11, fontWeight:600, color:T.text, width:60, textAlign:"right", flexShrink:0 }}>${spent.toFixed(4)}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div style={{ height:6, borderRadius:3, background:T.ghost, overflow:"hidden" }}>
-                    <div style={{ height:"100%", width:`${twitterBudgetPct}%`, background:twitterBudgetPct > 80 ? "#f87171" : twitterBudgetPct > 50 ? "#fbbf24" : T.accent, borderRadius:3, transition:"width 0.4s" }} />
+                )}
+
+                {/* Recent run log */}
+                {twitterRunLog.length > 0 && (
+                  <div>
+                    <div style={{ fontSize:11, color:T.dim, marginBottom:6 }}>Recent Twitter fetches</div>
+                    <div style={{ maxHeight:160, overflowY:"auto", display:"flex", flexDirection:"column", gap:2 }}>
+                      {twitterRunLog.slice(0,20).map((entry, i) => (
+                        <div key={i} style={{ display:"flex", alignItems:"center", gap:8, fontSize:10, padding:"3px 0", borderBottom:`1px solid ${T.border}` }}>
+                          <span style={{ color:T.faint, width:130, flexShrink:0 }}>{entry.at ? new Date(entry.at).toLocaleString() : "—"}</span>
+                          <span style={{ color:T.text, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{entry.company}</span>
+                          <span style={{ color:T.dim, width:55, textAlign:"right", flexShrink:0 }}>{entry.tweets} tweets</span>
+                          <span style={{ color:"#60a5fa", width:55, textAlign:"right", flexShrink:0 }}>${(entry.cost||0).toFixed(4)}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  {twitterBudgetPct >= 100 && <div style={{ fontSize:10, color:"#f87171", marginTop:4 }}>Budget reached — Twitter fetches paused until next month</div>}
-                </div>
+                )}
               </div>
             </div>
           </div>
@@ -1762,17 +3213,6 @@ function Admin({ settings, outlets, companies, onUpdateSettings, onUpdateOutlets
       {tab === "data" && (
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
           <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"16px 20px" }}>
-            <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:10 }}>Export / Import</div>
-            <div style={{ display:"flex", gap:10 }}>
-              <Btn onClick={handleExport} variant="primary">Export data</Btn>
-              <label style={{ cursor:"pointer" }}>
-                <Btn variant="ghost" onClick={() => {}}>Import data</Btn>
-                <input type="file" accept=".json" onChange={handleImport} style={{ display:"none" }} />
-              </label>
-            </div>
-          </div>
-
-          <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"16px 20px" }}>
             <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:6 }}>Storage</div>
             {(() => {
               const used = new Blob([localStorage.getItem(STORAGE_KEY) || ""]).size;
@@ -1786,6 +3226,21 @@ function Admin({ settings, outlets, companies, onUpdateSettings, onUpdateOutlets
                 </>
               );
             })()}
+          </div>
+
+          <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"16px 20px" }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:6 }}>Export / Import</div>
+            <div style={{ fontSize:11, color:T.dim, marginBottom:14, lineHeight:1.6 }}>
+              Export saves your company configuration — boolean queries, competitors, settings — as a JSON file.<br />
+              Import restores a previous export. Run results are not included in exports to keep file size small.
+            </div>
+            <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+              <Btn onClick={handleExport} variant="ghost">⬇ Export data</Btn>
+              <label style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"6px 14px", borderRadius:8, border:`1px solid ${T.border}`, fontSize:12, fontWeight:600, color:T.dim, cursor:"pointer", background:"transparent" }}>
+                ⬆ Import data
+                <input type="file" accept=".json" onChange={handleImport} style={{ display:"none" }} />
+              </label>
+            </div>
           </div>
 
           <div style={{ background:"rgba(239,68,68,0.04)", border:"1px solid rgba(239,68,68,0.2)", borderRadius:12, padding:"16px 20px" }}>
@@ -1863,6 +3318,424 @@ function AddCompanyModal({ onAdd, onClose }) {
   );
 }
 
+// ── Sandbox ───────────────────────────────────────────────────────────────────
+
+function makeSandboxDraft() {
+  return { id:`sandbox-${Date.now()}`, name:"", description:"", website:"", categories:[], boolean_query:"", boolean_approved:false, competitors:[], twitter_handle:"", twitter_accounts:[], runs:[], sovRun:null };
+}
+
+function Sandbox({ sandboxCompanies, onSave, onDelete, onPromote, settings, toast }) {
+  const [selectedId, setSelectedId] = useState(null);
+  const [draft, setDraft]           = useState(makeSandboxDraft);
+  const [running, setRunning]       = useState(false);
+  const [progress, setProgress]     = useState("");
+  const [suggestingBool, setSuggestingBool]   = useState(false);
+  const [suggestingComps, setSuggestingComps] = useState(false);
+  const [compInput, setCompInput]   = useState("");
+  const [activeTab, setActiveTab]   = useState("overview"); // overview | ask
+
+  const hasLLM = !!(settings.apiKeys?.vertex_enabled !== false || settings.apiKeys?.gemini || settings.apiKeys?.anthropic || settings.apiKeys?.cohere_north_key || settings.apiKeys?.cohere);
+
+  const selectSaved = c => { setSelectedId(c.id); setDraft({ ...c }); setActiveTab("overview"); };
+  const startNew    = () => { setSelectedId(null); setDraft(makeSandboxDraft()); setActiveTab("overview"); };
+
+  const patch = updater => setDraft(d => typeof updater === "function" ? updater(d) : { ...d, ...updater });
+
+  const handleSuggestBoolean = async () => {
+    if (!draft.name) { toast("Enter a company name first", "error"); return; }
+    setSuggestingBool(true);
+    try {
+      const sys = "You are an expert at writing precise boolean search queries for news monitoring APIs. Return ONLY the query string, no explanation, no markdown.";
+      const prompt = `Write a NewsAPI boolean search query for a company called "${draft.name}".${draft.description ? `\nWhat they do: ${draft.description}` : ""}${draft.website ? `\nWebsite: ${draft.website}` : ""}\n\nRules:\n- Use AND, OR, NOT and quoted phrases\n- Specific enough to avoid noise, broad enough to catch real coverage\n- Exclude obvious false positives\n\nReturn ONLY the query string.`;
+      const result = await callLLM(prompt, sys, settings.apiKeys);
+      patch({ boolean_query: result.trim(), boolean_approved: true });
+    } catch(e) { toast("AI suggestion failed: " + e.message, "error"); }
+    setSuggestingBool(false);
+  };
+
+  const handleSuggestCompetitors = async () => {
+    if (!draft.name) { toast("Enter a company name first", "error"); return; }
+    setSuggestingComps(true);
+    try {
+      const sys = "You are a VC analyst. Return ONLY a valid JSON array of competitor company name strings. No explanation.";
+      const prompt = `List 4–5 direct competitors for "${draft.name}".${draft.description ? `\nWhat they do: ${draft.description}` : ""}${draft.categories?.length ? `\nCategories: ${draft.categories.join(", ")}` : ""}\nDo NOT include Google, Amazon, Microsoft, OpenAI, or Anthropic.\nReturn ONLY a JSON array, e.g. ["Acme Corp", "Beta Inc"]`;
+      const raw = await callLLM(prompt, sys, settings.apiKeys);
+      const parsed = parseJSON(raw);
+      if (Array.isArray(parsed)) {
+        patch({ competitors: parsed.map(name => ({ id:`comp-sb-${Date.now()}-${name.replace(/\W/g,"")}`, name, rationale:"" })) });
+      } else { toast("Could not parse AI response", "error"); }
+    } catch(e) { toast("AI suggestion failed: " + e.message, "error"); }
+    setSuggestingComps(false);
+  };
+
+  const addCompetitor = () => {
+    const name = compInput.trim();
+    if (!name) return;
+    patch(d => ({ ...d, competitors: [...(d.competitors||[]), { id:`comp-sb-${Date.now()}`, name, rationale:"" }] }));
+    setCompInput("");
+  };
+
+  const handleRun = async () => {
+    if (!draft.name) { toast("Enter a company name first", "error"); return; }
+    const { apiKeys, features } = settings;
+    if (features.newsEnabled === false && !(features.twitterEnabled && apiKeys.twitter)) { toast("Enable at least one data source in Admin", "error"); return; }
+    setRunning(true);
+    try {
+      const result = await runCompany(draft, settings, setProgress);
+      const updated = { ...draft, runs: [result, ...(draft.runs||[])].slice(0, 3) };
+      patch(updated);
+      if (selectedId) onSave(updated); // auto-save if already saved
+      toast(`Done — ${result.mediaCount||0} articles, ${result.socialCount||0} social posts`, "success");
+    } catch(e) { toast("Run failed: " + e.message, "error"); }
+    setRunning(false); setProgress("");
+  };
+
+  const handleSave = () => {
+    const c = { ...draft, savedAt: new Date().toISOString() };
+    onSave(c);
+    setSelectedId(c.id);
+    toast(`"${c.name}" saved to Sandbox`, "success");
+  };
+
+  const handleSandboxDownload = () => {
+    const r = draft.runs?.[0];
+    if (!r) return;
+    const dateStr = new Date().toLocaleDateString("en-US", { month:"long", day:"numeric", year:"numeric" });
+    const sent    = r.sentimentScore || 0;
+    const media   = r.mediaResults  || [];
+    const social  = r.socialResults || [];
+    const themes  = detectThemes(media);
+
+    const t1 = media.filter(m => m.tier === 1).length;
+    const t2 = media.filter(m => m.tier === 2).length;
+    const t3 = media.filter(m => m.tier === 3).length;
+    const byPlat = {};
+    social.forEach(s => { byPlat[s.platform] = (byPlat[s.platform] || 0) + 1; });
+
+    const sentSVG  = exportSentimentSVG(sent);
+    const tierSVG  = (t1||t2||t3) ? exportBarsSVG([
+      { label:"Tier 1 (flagship)", value:t1, color:"#818cf8" },
+      { label:"Tier 2 (major)",    value:t2, color:"#60a5fa" },
+      { label:"Tier 3 (trade)",    value:t3, color:"#94a3b8" },
+    ]) : "";
+    const themeSVG = themes.length ? exportBarsSVG(themes.slice(0,8).map(t=>({ label:t.label, value:t.articles.length, color:"#f59e0b" }))) : "";
+    const platSVG  = Object.keys(byPlat).length ? exportBarsSVG(Object.entries(byPlat).sort((a,b)=>b[1]-a[1]).map(([p,n])=>({ label:p, value:n, color: PLAT[p]?.color||"#f59e0b" }))) : "";
+    const sparkSVG = draft.runs?.length > 1 ? exportSparklineSVG(draft.runs) : "";
+
+    const topArticles = media.slice(0, 8);
+    const articlesHTML = topArticles.length ? topArticles.map(a => `
+      <div style="padding:10px 0;border-bottom:1px solid #f3f4f6">
+        <div style="font-size:12px;font-weight:700;color:#111;margin-bottom:3px">${a.title || "Untitled"}</div>
+        <div style="font-size:11px;color:#6b7280">${a.source?.name || a.source || ""} ${a.publishedAt ? "· " + a.publishedAt.slice(0,10) : ""} ${a.url ? `· <a href="${a.url}" style="color:#818cf8">${a.url.replace(/^https?:\/\/(www\.)?/,"").split("/")[0]}</a>` : ""}</div>
+      </div>`).join("") : "";
+
+    const sentColor = sent > 0.2 ? "#16a34a" : sent < -0.2 ? "#dc2626" : "#d97706";
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>${draft.name} — Sandbox Research Report</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; max-width: 820px; margin: 40px auto; padding: 0 28px; color: #111; background: #fff; }
+  @media print { body { margin: 20px; } }
+  .section-label { font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 10px; }
+  .chart-card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
+  .chart-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  svg text { paint-order: stroke fill; }
+</style>
+</head><body>
+
+<div style="border-bottom:2px solid #f59e0b;padding-bottom:16px;margin-bottom:24px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between">
+    <div>
+      <div style="font-size:10px;font-weight:700;color:#f59e0b;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">⬡ Sandbox Research</div>
+      <h1 style="font-size:24px;font-weight:900;margin:0;letter-spacing:-0.03em">${draft.name}</h1>
+      <p style="color:#6b7280;font-size:13px;margin:4px 0 0">Prepared by Radical Intelligence Platform · ${dateStr}</p>
+      ${draft.description ? `<p style="color:#374151;font-size:12px;margin:6px 0 0;font-style:italic">${draft.description}</p>` : ""}
+    </div>
+    <div style="text-align:right;font-size:11px;color:#9ca3af">
+      ${media.length} articles · ${social.length} posts<br>
+      ${r.fromDate||""} → ${r.ranAt?.slice(0,10)||""}
+    </div>
+  </div>
+  ${draft.competitors?.length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+    <span style="font-size:10px;color:#6b7280;font-weight:700;align-self:center">Competitors tracked:</span>
+    ${draft.competitors.map(c=>`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#fef3c7;color:#92400e;font-weight:600">${c.name}</span>`).join("")}
+  </div>` : ""}
+</div>
+
+<div style="margin-bottom:28px">
+  <h2 style="font-size:13px;font-weight:800;color:#111;margin:0 0 14px;text-transform:uppercase;letter-spacing:0.05em">Coverage Data</h2>
+
+  ${sentSVG ? `<div class="chart-card">
+    <div class="section-label">Overall Sentiment</div>
+    <div style="display:flex;align-items:center;gap:16px">
+      <div style="font-size:32px;font-weight:900;color:${sentColor};letter-spacing:-0.04em">${sent>=0?"+":""}${sent.toFixed(2)}</div>
+      <div style="flex:1">${sentSVG}${sparkSVG ? `<div style="margin-top:6px"><div class="section-label">Sentiment trend</div>${sparkSVG}</div>` : ""}</div>
+    </div>
+  </div>` : ""}
+
+  ${(tierSVG||platSVG) ? `<div class="${tierSVG && platSVG ? "chart-grid-2" : ""}">
+    ${tierSVG ? `<div class="chart-card"><div class="section-label">Outlet Tiers</div>${tierSVG}</div>` : ""}
+    ${platSVG ? `<div class="chart-card"><div class="section-label">Social Platforms</div>${platSVG}</div>` : ""}
+  </div>` : ""}
+
+  ${themeSVG ? `<div class="chart-card">
+    <div class="section-label">Coverage Themes (${themes.length} detected)</div>
+    ${themeSVG}
+  </div>` : ""}
+</div>
+
+${articlesHTML ? `<div style="margin-bottom:28px">
+  <h2 style="font-size:13px;font-weight:800;color:#111;margin:0 0 14px;text-transform:uppercase;letter-spacing:0.05em">Top Articles</h2>
+  <div class="chart-card" style="padding:0 18px">${articlesHTML}</div>
+</div>` : ""}
+
+<div style="margin-top:32px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:10px;color:#9ca3af">
+  Generated by Radical Intelligence Platform · Radical Ventures · ${dateStr}
+</div>
+
+</body></html>`;
+
+    const w = window.open("", "_blank");
+    if (!w) { toast("Pop-up blocked — allow pop-ups to use Download", "error"); return; }
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 600);
+  };
+
+  const run = draft.runs?.[0];
+  const hasResults = !!(run?.mediaResults?.length || run?.socialResults?.length);
+  const isSaved = !!selectedId;
+
+  const ACCENT_SANDBOX = "#f59e0b"; // amber — distinct from portfolio indigo
+
+  return (
+    <div style={{ display:"flex", height:"calc(100vh - 52px)", overflow:"hidden" }}>
+
+      {/* ── Sidebar ─────────────────────────────────────────────── */}
+      <div style={{ width:220, borderRight:`1px solid ${T.border}`, display:"flex", flexDirection:"column", flexShrink:0, background:"rgba(0,0,0,0.15)" }}>
+        <div style={{ padding:"14px 14px 10px", borderBottom:`1px solid ${T.border}` }}>
+          <div style={{ fontSize:12, fontWeight:800, color:ACCENT_SANDBOX, letterSpacing:"0.04em", textTransform:"uppercase" }}>⬡ Sandbox</div>
+          <div style={{ fontSize:10, color:T.dim, marginTop:2 }}>{sandboxCompanies.length} saved · deal research</div>
+        </div>
+        <div style={{ flex:1, overflowY:"auto", padding:8 }}>
+          <button onClick={startNew}
+            style={{ width:"100%", padding:"7px 10px", borderRadius:8, border:`1px dashed ${ACCENT_SANDBOX}40`, background:"transparent", color:ACCENT_SANDBOX, fontSize:11, fontWeight:700, cursor:"pointer", marginBottom:8, textAlign:"left" }}>
+            + New research
+          </button>
+          {sandboxCompanies.length === 0 && (
+            <div style={{ fontSize:11, color:T.faint, padding:"8px 4px", lineHeight:1.5 }}>No saved research yet. Start by entering a company above.</div>
+          )}
+          {sandboxCompanies.map(c => (
+            <div key={c.id} onClick={() => selectSaved(c)}
+              style={{ padding:"8px 10px", borderRadius:8, marginBottom:3, cursor:"pointer",
+                background: selectedId===c.id ? `${ACCENT_SANDBOX}18` : "transparent",
+                border:`1px solid ${selectedId===c.id ? ACCENT_SANDBOX+"40" : "transparent"}` }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                <span style={{ fontSize:12, fontWeight:600, color:T.text }}>{c.name}</span>
+                <button onClick={e => { e.stopPropagation(); onDelete(c.id); if(selectedId===c.id){ startNew(); } }}
+                  style={{ background:"none", border:"none", color:T.faint, cursor:"pointer", fontSize:14, padding:0, lineHeight:1 }}>×</button>
+              </div>
+              {c.runs?.[0] && <div style={{ fontSize:10, color:T.dim, marginTop:2 }}>{c.runs[0].mediaCount||0} art · {c.runs[0].socialCount||0} soc · <span style={{ color: (c.runs[0].sentimentScore||0)>0.1?"#4ade80":(c.runs[0].sentimentScore||0)<-0.1?"#f87171":"#f59e0b" }}>{(c.runs[0].sentimentScore||0)>=0?"+":""}{(c.runs[0].sentimentScore||0).toFixed(2)}</span></div>}
+              <div style={{ fontSize:10, color:T.faint }}>{c.savedAt ? ago(c.savedAt) : "unsaved"}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Main panel ──────────────────────────────────────────── */}
+      <div style={{ flex:1, overflowY:"auto" }}>
+        <div style={{ maxWidth:920, margin:"0 auto", padding:"24px 32px" }}>
+
+          {/* Header */}
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
+            <div>
+              <div style={{ fontSize:20, fontWeight:800, color:T.text }}>
+                {draft.name || <span style={{ color:T.faint }}>New Research</span>}
+              </div>
+              <div style={{ fontSize:12, color:T.dim, marginTop:3 }}>
+                Research a prospect before adding to portfolio — AI-assisted queries, competitor mapping, news & social scan
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end", alignItems:"center" }}>
+              {/* Source toggles */}
+              {[
+                { key:"newsEnabled",    label:"News",    color:"#60a5fa", default:true },
+                { key:"twitterEnabled", label:"Twitter", color:"#1d9bf0" },
+              ].map(s => {
+                const on = settings.features?.[s.key] ?? s.default ?? false;
+                const hasKey = s.key === "twitterEnabled" ? !!settings.apiKeys?.twitter : true;
+                return (
+                  <button key={s.key}
+                    onClick={() => s.key === "twitterEnabled" && !hasKey ? null : undefined}
+                    title={s.key === "twitterEnabled" && !hasKey ? "Add Twitter API key in Admin → API Keys" : `${on ? "Enabled" : "Disabled"} — toggle in Admin`}
+                    style={{ padding:"3px 9px", borderRadius:20, fontSize:10, fontWeight:700, cursor:"default", border:`1px solid ${on && hasKey ? s.color+"60" : T.border}`, background:on && hasKey ? `${s.color}18` : "transparent", color:on && hasKey ? s.color : T.faint }}>
+                    {on && hasKey ? "●" : "○"} {s.label}
+                  </button>
+                );
+              })}
+              {isSaved && onPromote && (
+                <Btn onClick={() => onPromote(draft)} variant="ghost" style={{ fontSize:11 }}>→ Add to Portfolio</Btn>
+              )}
+              {draft.name && hasResults && !isSaved && (
+                <Btn onClick={handleSave} variant="ghost">Save to Sandbox</Btn>
+              )}
+              {draft.name && hasResults && isSaved && (
+                <Btn onClick={handleSave} variant="ghost" style={{ fontSize:11 }}>Update saved</Btn>
+              )}
+              {hasResults && (
+                <Btn onClick={handleSandboxDownload} variant="ghost" style={{ fontSize:11 }}>⬇ Download</Btn>
+              )}
+              <Btn onClick={handleRun} disabled={running || !draft.name} variant="primary"
+                style={{ background:`${ACCENT_SANDBOX}`, borderColor:ACCENT_SANDBOX, color:"#000" }}>
+                {running ? <><Spinner /> {progress||"Running…"}</> : "▶ Run research"}
+              </Btn>
+            </div>
+          </div>
+
+          {/* Company fields */}
+          <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"16px 20px", marginBottom:12 }}>
+            <div style={{ fontSize:11, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:12 }}>Company details</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 100px", gap:10, marginBottom:10 }}>
+              <div>
+                <div style={{ fontSize:11, color:T.dim, marginBottom:4 }}>Company name *</div>
+                <Input value={draft.name} onChange={v => patch({ name:v })} placeholder="e.g. Acme AI" />
+              </div>
+              <div>
+                <div style={{ fontSize:11, color:T.dim, marginBottom:4 }}>Website</div>
+                <Input value={draft.website||""} onChange={v => patch({ website:v })} placeholder="acme.ai" />
+              </div>
+              <div>
+                <div style={{ fontSize:11, color:T.dim, marginBottom:4 }}>
+                  Twitter handle
+                  {!(settings.features?.twitterEnabled && settings.apiKeys?.twitter) && <span style={{ color:T.faint, fontWeight:400 }}> (Twitter not enabled)</span>}
+                </div>
+                <Input value={draft.twitter_handle||""} onChange={v => patch({ twitter_handle:v.replace(/^@/,"") })} placeholder="@handle" />
+              </div>
+              <div>
+                <div style={{ fontSize:11, color:T.dim, marginBottom:4 }}>Year founded</div>
+                <Input value={draft.year||""} onChange={v => patch({ year:v })} placeholder="2024" />
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:T.dim, marginBottom:4 }}>Description <span style={{ color:T.faint }}>(helps AI generate better suggestions)</span></div>
+              <Input value={draft.description||""} onChange={v => patch({ description:v })} placeholder="What does this company do? Who are their customers?" />
+            </div>
+          </div>
+
+          {/* Boolean query */}
+          {(() => {
+            const savedQuery = sandboxCompanies.find(c => c.id === selectedId)?.boolean_query || "";
+            const currentQuery = draft.boolean_query || "";
+            const hasQuery = !!currentQuery.trim();
+            const queryChanged = isSaved && currentQuery !== savedQuery;
+
+            return (
+              <div style={{ background:T.card, border:`1px solid ${hasQuery ? T.accent+"40" : T.border}`, borderRadius:12, padding:"16px 20px", marginBottom:12 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:"0.07em" }}>Boolean search query</div>
+                  <Btn onClick={handleSuggestBoolean} disabled={suggestingBool||!draft.name||!hasLLM} variant="ghost" style={{ fontSize:11 }}>
+                    {suggestingBool ? <><Spinner/> Generating…</> : "✦ AI suggest"}
+                  </Btn>
+                </div>
+                <textarea value={currentQuery} onChange={e => patch({ boolean_query:e.target.value, boolean_approved:true })}
+                  placeholder={`"${draft.name||"Company"}" AND ("AI" OR "funding" OR "launch") NOT "false positive"`}
+                  rows={3}
+                  style={{ width:"100%", background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"8px 11px", fontSize:12, color:T.text, outline:"none", resize:"vertical", fontFamily:"monospace", boxSizing:"border-box" }}
+                />
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:8, gap:8, flexWrap:"wrap" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    {hasQuery ? (
+                      <span style={{ fontSize:11, color:"#4ade80", fontWeight:600 }}>✓ Active — will be used in next run</span>
+                    ) : (
+                      <span style={{ fontSize:11, color:T.faint }}>No query set — enter one above or use AI suggest</span>
+                    )}
+                    {hasQuery && !isSaved && (
+                      <span style={{ fontSize:10, color:"#f59e0b" }}>· Not saved yet — click "Save to Sandbox" to persist</span>
+                    )}
+                    {queryChanged && (
+                      <span style={{ fontSize:10, color:"#f59e0b" }}>· Unsaved changes</span>
+                    )}
+                  </div>
+                  {queryChanged && (
+                    <Btn onClick={() => { const c = { ...draft, savedAt: new Date().toISOString() }; onSave(c); toast("Query saved", "success"); }} variant="ghost" style={{ fontSize:10, padding:"3px 10px" }}>
+                      Save now
+                    </Btn>
+                  )}
+                </div>
+                {!hasLLM && <div style={{ fontSize:10, color:T.faint, marginTop:4 }}>Add an LLM key in Admin → API Keys to enable AI suggestions.</div>}
+              </div>
+            );
+          })()}
+
+          {/* Competitors */}
+          <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"16px 20px", marginBottom:20 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:"0.07em" }}>Competitors <span style={{ color:T.faint, fontWeight:400, fontSize:10, textTransform:"none" }}>for share of voice analysis</span></div>
+              <Btn onClick={handleSuggestCompetitors} disabled={suggestingComps||!draft.name||!hasLLM} variant="ghost" style={{ fontSize:11 }}>
+                {suggestingComps ? <><Spinner/> Suggesting…</> : "✦ AI suggest"}
+              </Btn>
+            </div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8, minHeight:28 }}>
+              {(draft.competitors||[]).map(c => (
+                <span key={c.id} style={{ padding:"4px 10px", borderRadius:20, background:T.ghost, border:`1px solid ${T.border}`, fontSize:12, color:T.text, display:"flex", alignItems:"center", gap:5 }}>
+                  {c.name}
+                  <button onClick={() => patch(d => ({ ...d, competitors: d.competitors.filter(x => x.id!==c.id) }))}
+                    style={{ background:"none", border:"none", color:T.faint, cursor:"pointer", padding:0, fontSize:13, lineHeight:1 }}>×</button>
+                </span>
+              ))}
+              {(draft.competitors||[]).length === 0 && <span style={{ fontSize:11, color:T.faint }}>No competitors added yet</span>}
+            </div>
+            <div style={{ display:"flex", gap:6 }}>
+              <Input value={compInput} onChange={setCompInput} placeholder="Type a competitor name and press Enter…"
+                onKeyDown={e => { if(e.key==="Enter"){ e.preventDefault(); addCompetitor(); } }} style={{ flex:1 }} />
+              <Btn onClick={addCompetitor} variant="ghost">Add</Btn>
+            </div>
+          </div>
+
+          {/* Results */}
+          {hasResults && (
+            <div>
+              {/* Result tabs */}
+              <div style={{ display:"flex", gap:2, borderBottom:`1px solid ${T.border}`, marginBottom:16 }}>
+                {[{id:"overview",label:"Overview"},{id:"ask",label:"✦ Ask AI"}].map(t => (
+                  <button key={t.id} onClick={() => setActiveTab(t.id)}
+                    style={{ padding:"8px 16px", border:"none", background:"transparent", cursor:"pointer", fontSize:13, fontWeight:600,
+                      color:activeTab===t.id ? ACCENT_SANDBOX : T.dim,
+                      borderBottom:activeTab===t.id ? `2px solid ${ACCENT_SANDBOX}` : "2px solid transparent", marginBottom:-1 }}>
+                    {t.label}
+                  </button>
+                ))}
+                <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:6, paddingBottom:4, fontSize:11, color:T.dim }}>
+                  {run.mediaCount||0} articles · {run.socialCount||0} social ·
+                  <span style={{ color:(run.sentimentScore||0)>0.1?"#4ade80":(run.sentimentScore||0)<-0.1?"#f87171":"#f59e0b", fontWeight:700 }}>
+                    {(run.sentimentScore||0)>=0?"+":""}{(run.sentimentScore||0).toFixed(2)} sentiment
+                  </span>
+                </div>
+              </div>
+              {activeTab==="overview" && <OverviewTab company={draft} run={run} />}
+              {activeTab==="ask"      && <AskAITab company={draft} settings={settings} />}
+            </div>
+          )}
+
+          {/* Empty run state */}
+          {!hasResults && !running && (
+            <div style={{ textAlign:"center", padding:"48px 0", color:T.dim }}>
+              <div style={{ fontSize:32, marginBottom:12 }}>⬡</div>
+              <div style={{ fontSize:14, fontWeight:600, color:T.text, marginBottom:6 }}>Ready to research</div>
+              <div style={{ fontSize:12, color:T.dim, marginBottom:20 }}>Fill in the company details above, optionally generate AI suggestions, then click Run research</div>
+              <Btn onClick={handleRun} disabled={!draft.name} variant="primary" style={{ background:ACCENT_SANDBOX, borderColor:ACCENT_SANDBOX, color:"#000" }}>
+                ▶ Run research
+              </Btn>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── App Root ──────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -1874,10 +3747,10 @@ export default function App() {
 
   useEffect(() => { saveState(state); }, [state]);
 
-  const { companies, outlets, settings } = state;
+  const { companies, outlets, settings, sandboxCompanies = [] } = state;
 
-  const updateSettings = useCallback(s => setState(prev => ({ ...prev, settings: s })), []);
-  const updateOutlets  = useCallback(o => setState(prev => ({ ...prev, outlets: o })), []);
+  const updateSettings  = useCallback(s  => setState(prev => ({ ...prev, settings: s })), []);
+  const updateOutlets   = useCallback(o  => setState(prev => ({ ...prev, outlets: o })), []);
   const updateCompanies = useCallback(cs => setState(prev => ({ ...prev, companies: cs })), []);
 
   const updateCompany = useCallback(updated => {
@@ -1889,6 +3762,39 @@ export default function App() {
     setState(prev => ({ ...prev, companies: [...prev.companies, company] }));
   }, []);
 
+  // Sandbox handlers
+  const saveSandboxCompany = useCallback(company => {
+    setState(prev => {
+      const existing = prev.sandboxCompanies || [];
+      const idx = existing.findIndex(c => c.id === company.id);
+      const updated = idx >= 0 ? existing.map(c => c.id === company.id ? company : c) : [...existing, company];
+      return { ...prev, sandboxCompanies: updated };
+    });
+  }, []);
+
+  const deleteSandboxCompany = useCallback(id => {
+    setState(prev => ({ ...prev, sandboxCompanies: (prev.sandboxCompanies||[]).filter(c => c.id !== id) }));
+  }, []);
+
+  const promoteSandboxToPortfolio = useCallback(sandboxCompany => {
+    // Convert sandbox entry to portfolio company format with a new numeric id
+    const newId = Date.now();
+    const portfolioCompany = {
+      ...sandboxCompany,
+      id: newId,
+      enabled: true,
+      boolean_approved: !!sandboxCompany.boolean_query,
+    };
+    delete portfolioCompany.savedAt;
+    setState(prev => ({
+      ...prev,
+      companies: [...prev.companies, portfolioCompany],
+      sandboxCompanies: (prev.sandboxCompanies||[]).filter(c => c.id !== sandboxCompany.id),
+    }));
+    setView("portfolio");
+    toast(`"${sandboxCompany.name}" added to Portfolio`, "success");
+  }, [toast]);
+
   const handleRun = useCallback(async (company) => {
     const { apiKeys, features } = settings;
     const hasNews    = features.newsEnabled !== false && !!apiKeys.newsapi;
@@ -1899,13 +3805,33 @@ export default function App() {
     }
     try {
       const result = await runCompany(company, { ...settings, outlets }, () => {});
-      const updatedRuns = [result, ...(company.runs || [])].slice(0, 3);
+      const prevRun = company.runs?.[0] || {};
+      const newsWasOff    = features.newsEnabled === false;
+      const twitterWasOff = !(features.twitterEnabled && apiKeys.twitter);
+      // Preserve existing results for any source that was toggled off this run
+      const mergedResult = {
+        ...result,
+        ...(newsWasOff && prevRun.mediaResults?.length ? {
+          mediaResults: prevRun.mediaResults,
+          mediaCount:   prevRun.mediaCount ?? prevRun.mediaResults.length,
+        } : {}),
+        ...(twitterWasOff && prevRun.socialResults?.length ? {
+          socialResults: prevRun.socialResults,
+          socialCount:   prevRun.socialCount ?? prevRun.socialResults.length,
+        } : {}),
+      };
+      const updatedRuns = [mergedResult, ...(company.runs || [])].slice(0, 3);
       updateCompany({ ...company, runs: updatedRuns });
-      // Track Twitter spend
+      // Track Twitter spend + run log
       if (result.twitterCost > 0) {
         const monthKey = new Date().toISOString().slice(0, 7);
         const prev = settings.twitterSpend || {};
-        updateSettings({ ...settings, twitterSpend: { ...prev, [monthKey]: (prev[monthKey] || 0) + result.twitterCost } });
+        const prevLog = settings.twitterRunLog || [];
+        const logEntry = { at: new Date().toISOString(), company: company.name, tweets: result.socialCount || 0, cost: result.twitterCost };
+        updateSettings({ ...settings,
+          twitterSpend: { ...prev, [monthKey]: (prev[monthKey] || 0) + result.twitterCost },
+          twitterRunLog: [logEntry, ...prevLog].slice(0, 200),
+        });
       }
     } catch (e) { toast("Run failed: " + e.message, "error"); }
   }, [settings, outlets, updateCompany, toast]);
@@ -1926,6 +3852,7 @@ export default function App() {
   const navItems = [
     { id:"portfolio", label:"Portfolio" },
     { id:"signals",   label:`Signals${signalCount > 0 ? ` (${signalCount})` : ""}` },
+    { id:"sandbox",   label:"⬡ Sandbox" },
     { id:"admin",     label:"Admin" },
   ];
 
@@ -1981,6 +3908,15 @@ export default function App() {
           />
         ) : view === "signals" ? (
           <Signals companies={companies} />
+        ) : view === "sandbox" ? (
+          <Sandbox
+            sandboxCompanies={sandboxCompanies}
+            onSave={saveSandboxCompany}
+            onDelete={deleteSandboxCompany}
+            onPromote={promoteSandboxToPortfolio}
+            settings={settings}
+            toast={toast}
+          />
         ) : view === "admin" ? (
           <Admin
             settings={settings}

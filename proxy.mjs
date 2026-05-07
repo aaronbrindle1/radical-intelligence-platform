@@ -267,6 +267,7 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ error: "x-twitter-key header required" }));
       return;
     }
+    console.log(`[twitter] key=${twitterKey.slice(0,8)}... forwarding to api.twitterapi.io${path.split("?")[0]}`);
     proxyRequest(req, res, `https://api.twitterapi.io${path}`, { "x-api-key": twitterKey });
     return;
   }

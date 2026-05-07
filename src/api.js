@@ -374,7 +374,8 @@ export async function yutoriResearch(company, dateRangeId, yutoriKey, onProgress
 
 // ── TwitterAPI.io integration ─────────────────────────────────────────────────
 
-export const TWITTER_COST_PER_TWEET = 0.00015; // $0.15 per 1000 tweets
+export const TWITTER_COST_PER_TWEET = 0.00015;    // $0.15 per 1,000 tweets
+export const TWITTER_COST_PER_CALL = 0.00015;     // minimum $0.00015 per API call
 
 // Convert our NewsAPI boolean query format to Twitter Advanced Search syntax.
 // Key differences: NOT "phrase" → -"phrase", NOT word → -word
@@ -384,6 +385,13 @@ function booleanToTwitterQuery(query) {
     .replace(/\bNOT\s+"([^"]+)"/gi, (_, p) => `-"${p}"`)
     .replace(/\bNOT\s+([^\s")]+)/gi, (_, p) => `-${p}`)
     .trim();
+}
+
+// Convert YYYY-MM-DD string to Unix timestamp (seconds).
+// TwitterAPI.io requires since_time/until_time — the legacy since:YYYY-MM-DD
+// date filter no longer works reliably for historical data.
+function dateToUnix(dateStr) {
+  return Math.floor(new Date(dateStr + "T00:00:00Z").getTime() / 1000);
 }
 
 export async function fetchTwitter(company, fromDate, twitterKey, maxPages = 3, budgetRemainingUSD = Infinity) {
@@ -400,17 +408,19 @@ export async function fetchTwitter(company, fromDate, twitterKey, maxPages = 3, 
     ? ` OR (${allHandles.map(h => `from:${h}`).join(" OR ")})`
     : "";
 
-  // Combined: keyword mentions OR posts from tracked handles, since date, no retweets
-  const fullQuery = `(${baseQuery}${fromClause}) since:${fromDate} -is:retweet`;
+  // Use Unix timestamp date filter (legacy since:YYYY-MM-DD no longer reliable)
+  const sinceUnix = dateToUnix(fromDate);
+  const fullQuery = `(${baseQuery}${fromClause}) since_time:${sinceUnix} -is:retweet`;
 
   const results = [];
+  const seenIds = new Set(); // guard against cursor pagination duplicates
   let cursor = null;
   let pagesUsed = 0;
   let estimatedCost = 0;
 
   for (let page = 0; page < maxPages; page++) {
-    // Stop if we'd exceed the budget
-    if (estimatedCost + (20 * TWITTER_COST_PER_TWEET) > budgetRemainingUSD) {
+    // Each call costs at minimum TWITTER_COST_PER_CALL regardless of tweet count
+    if (estimatedCost + Math.max(20 * TWITTER_COST_PER_TWEET, TWITTER_COST_PER_CALL) > budgetRemainingUSD) {
       console.log(`[twitter] Budget cap reached at page ${page}`);
       break;
     }
@@ -419,7 +429,7 @@ export async function fetchTwitter(company, fromDate, twitterKey, maxPages = 3, 
       if (cursor) params.set("cursor", cursor);
 
       const fetchUrl = `http://localhost:3001/twitter/twitter/tweet/advanced_search?${params}`;
-      console.log(`[twitter] page ${page+1} → ${fetchUrl.split("?")[0]}, query: ${fullQuery.slice(0,80)}`);
+      console.log(`[twitter] page ${page+1} → since_time:${sinceUnix}, query: ${fullQuery.slice(0,80)}`);
       const r = await fetch(fetchUrl, { headers: { "x-twitter-key": twitterKey } });
       if (!r.ok) {
         const errText = await r.text().catch(() => "");
@@ -429,31 +439,73 @@ export async function fetchTwitter(company, fromDate, twitterKey, maxPages = 3, 
       const d = await r.json();
       if (d.error || d.errors) { console.warn("[twitter] API error:", d.error || JSON.stringify(d.errors)); break; }
       const tweets = Array.isArray(d.tweets) ? d.tweets : [];
+      // Log first tweet shape once so we can verify field names
+      if (page === 0 && tweets.length > 0) {
+        const sample = tweets[0];
+        console.log("[twitter] sample tweet keys:", Object.keys(sample));
+        console.log("[twitter] sample author obj:", JSON.stringify(sample.author || sample.user || "none"));
+      }
       pagesUsed++;
-      estimatedCost += tweets.length * TWITTER_COST_PER_TWEET;
+      // Cost = per-tweet charge, minimum per-call charge
+      estimatedCost += Math.max(tweets.length * TWITTER_COST_PER_TWEET, TWITTER_COST_PER_CALL);
 
+      let newTweets = 0;
       tweets.forEach(t => {
+        const tweetId = t.id || String(Date.now() + Math.random());
+        if (seenIds.has(tweetId)) return; // skip cursor-pagination duplicates
+        seenIds.add(tweetId);
+        newTweets++;
         const text = t.text || "";
+
+        // TwitterAPI.io uses camelCase (userName) — also try snake_case and nested user obj.
+        // Final fallback: extract handle from the tweet URL itself.
+        const authorObj = t.author || t.user || {};
+        const rawHandle =
+          authorObj.userName    ||   // TwitterAPI.io primary
+          authorObj.username    ||   // some endpoints use lowercase
+          authorObj.screen_name ||   // legacy Twitter v1 naming
+          authorObj.screenName  ||
+          (() => {                   // extract from URL: x.com/HANDLE/status/ID
+            const m = (t.url || "").match(/(?:twitter\.com|x\.com)\/([A-Za-z0-9_]{1,50})\/status\//);
+            return m ? m[1] : null;
+          })() ||
+          "unknown";
+
+        const followerCount =
+          authorObj.followers       ||
+          authorObj.followersCount  ||
+          authorObj.followers_count ||
+          0;
+
+        const isVerified =
+          authorObj.isVerified  ||
+          authorObj.verified    ||
+          authorObj.blueVerified ||
+          false;
+
+        const tweetUrl = t.url || `https://x.com/${rawHandle}/status/${tweetId}`;
+
         results.push({
-          id: `tw-${company.id}-${t.id || Date.now()}`,
+          id: `tw-${company.id}-${tweetId}`,
           platform: "twitter",
-          author: `@${t.author?.username || "unknown"}`,
+          author: `@${rawHandle}`,
           text,
-          url: t.url || `https://x.com/i/web/status/${t.id}`,
-          likes: t.likeCount || 0,
-          comments: t.replyCount || 0,
-          retweets: t.retweetCount || 0,
-          views: t.viewCount || 0,
-          date: t.createdAt ? t.createdAt.slice(0, 10) : "",
+          url: tweetUrl,
+          likes: t.likeCount || t.like_count || t.favorite_count || 0,
+          comments: t.replyCount || t.reply_count || 0,
+          retweets: t.retweetCount || t.retweet_count || 0,
+          views: t.viewCount || t.view_count || t.impressionCount || 0,
+          date: t.createdAt ? t.createdAt.slice(0, 10) : (t.created_at ? t.created_at.slice(0, 10) : ""),
           sentiment: quickSentiment("", text),
-          isVerified: t.author?.isVerified || false,
-          followerCount: t.author?.followers || 0,
+          isVerified,
+          followerCount,
           isLive: true,
           source: "TwitterAPI.io",
         });
       });
 
-      if (!d.has_next_page || !d.next_cursor || tweets.length === 0) break;
+      // Stop if no new unique tweets (cursor loop detected) or no more pages
+      if (newTweets === 0 || !d.has_next_page || !d.next_cursor) break;
       cursor = d.next_cursor;
     } catch (e) {
       console.warn("[twitter] Fetch error:", e.message);
@@ -651,6 +703,7 @@ export async function runSOV(company, competitors, settings, onProgress) {
   for (const subject of subjects) {
     onProgress(`Analysing ${subject.name}…`);
     let mediaCount = 0, socialCount = 0, sentiment = 0;
+    let topArticles = []; // top 5 headlines for snapshot display
 
     if (apiKeys.newsapi) {
       try {
@@ -659,11 +712,19 @@ export async function runSOV(company, competitors, settings, onProgress) {
           `http://localhost:3001/newsapi/v2/everything?q=${encodeURIComponent(q)}&from=${fromDate}&sortBy=relevancy&pageSize=100&page=1&language=en&apiKey=${apiKeys.newsapi}`
         );
         const d = await r.json();
-        const arts = d.articles || [];
+        const arts = (d.articles || []).filter(a => a.title && a.title !== "[Removed]");
         mediaCount = d.totalResults ? Math.min(d.totalResults, 300) : arts.length;
         if (arts.length > 0) {
           const scores = arts.slice(0, 20).map(a => quickSentiment(a.title || "", a.description || ""));
           sentiment = scores.reduce((s, v) => s + v, 0) / scores.length;
+          // Store top 5 articles for snapshot display
+          topArticles = arts.slice(0, 5).map(a => ({
+            title: a.title || "",
+            source: a.source?.name || "",
+            url: a.url || "",
+            date: (a.publishedAt || "").slice(0, 10),
+            sentiment: quickSentiment(a.title || "", a.description || ""),
+          }));
         }
       } catch {}
     }
@@ -695,7 +756,7 @@ export async function runSOV(company, competitors, settings, onProgress) {
       } catch {}
     }
 
-    results.push({ name: subject.name, isBase: subject.isBase, mediaCount, socialCount, sentiment });
+    results.push({ name: subject.name, isBase: subject.isBase, mediaCount, socialCount, sentiment, topArticles });
   }
 
   return { ranAt: new Date().toISOString(), dateRangeId: dateRange, results };
@@ -767,9 +828,37 @@ export async function generateBriefing(company, persona, apiKeys) {
     .map(s => `• [${s.platform}] ${s.text?.slice(0,200) || ""}`).join("\n");
 
   const sov = company.sovRun;
-  const sovContext = sov?.results?.length
-    ? sov.results.map(r => `  ${r.isBase ? "★ " : "  "}${r.name}: ${r.mediaCount || 0} articles, sentiment ${(r.sentiment || 0).toFixed(2)}`).join("\n")
-    : null;
+  const sovContext = (() => {
+    if (!sov?.results?.length) return null;
+    const totalMedia  = sov.results.reduce((s, r) => s + (r.mediaCount  || 0), 0);
+    const totalSocial = sov.results.reduce((s, r) => s + (r.socialCount || 0), 0);
+    const sorted = [...sov.results].sort((a, b) => (b.mediaCount || 0) - (a.mediaCount || 0));
+    const rank = sorted.findIndex(r => r.isBase) + 1;
+    let ctx = `Share of Voice data (collected ${sov.ranAt?.slice(0,10) || "unknown"}, ${sov.results.length} companies tracked):\n`;
+    ctx += sorted.map(r => {
+      const pressPct  = totalMedia  > 0 ? Math.round((r.mediaCount  || 0) / totalMedia  * 100) : 0;
+      const socialPct = totalSocial > 0 ? Math.round((r.socialCount || 0) / totalSocial * 100) : 0;
+      const marker = r.isBase ? "★ " : "  ";
+      let line = `${marker}${r.name}: ${r.mediaCount || 0} press articles (${pressPct}% SOV)`;
+      if (totalSocial > 0) line += `, ${r.socialCount || 0} social posts (${socialPct}% SOV)`;
+      line += `, sentiment ${(r.sentiment || 0).toFixed(2)}`;
+      return line;
+    }).join("\n");
+    ctx += `\n${company.name} ranks #${rank} by press coverage out of ${sov.results.length} companies tracked.`;
+    if (sov.aiSummary) ctx += `\n\nAI competitive analysis:\n${sov.aiSummary}`;
+    // Include top headlines per company
+    const withArticles = sorted.filter(r => r.topArticles?.length);
+    if (withArticles.length) {
+      ctx += "\n\nRecent top headlines by company:";
+      withArticles.forEach(r => {
+        ctx += `\n  ${r.name}:\n`;
+        r.topArticles.slice(0, 3).forEach(a => {
+          ctx += `    - [${a.date}] ${a.source}: ${a.title}\n`;
+        });
+      });
+    }
+    return ctx;
+  })();
 
   // ── Rich data packet for portfolio company report ─────────────────────────
   let reportPrompt = null;
@@ -809,10 +898,10 @@ export async function generateBriefing(company, persona, apiKeys) {
     const topSocialFull = socialResults.slice(0, 8)
       .map(s => `  • [${s.platform}] ${s.text?.slice(0, 200) || ""}${s.likes ? ` (${s.likes} likes)` : ""}`).join("\n");
 
-    // Competitive context
+    // Competitive context — now uses enriched sovContext with %, rank, headlines, AI summary
     const compSection = sovContext
-      ? `\nCOMPETITIVE SHARE OF VOICE (last SOV run: ${sov.ranAt?.slice(0,10) || "unknown"}):\n${sovContext}\n\nRelative position: ${company.name} had ${sov.results.find(r=>r.isBase)?.mediaCount || 0} articles vs peers above.`
-      : "\nCOMPETITIVE DATA: Not available — run Share of Voice for competitive context.";
+      ? `\nCOMPETITIVE SHARE OF VOICE:\n${sovContext}`
+      : "\nCOMPETITIVE DATA: Not available — run Share of Voice tab for competitive context.";
 
     reportPrompt = `You are writing a media and public coverage report FROM Radical Ventures TO the ${company.name} leadership team.
 
@@ -885,7 +974,7 @@ Now write the full report. Be analytical, specific, and reference the actual dat
   };
 
   const standardExtra = persona !== "report" && sovContext
-    ? `\n\nCompetitive share of voice:\n${sovContext}`
+    ? `\n\nCOMPETITIVE SHARE OF VOICE (include a brief competitive context section in your briefing):\n${sovContext}`
     : "";
 
   const userPrompt = reportPrompt ||

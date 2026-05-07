@@ -43,3 +43,17 @@ export function clearCache() {
     console.error("Cache clear error:", e);
   }
 }
+
+// Delete all newsapi cache entries whose response body contains the given term
+export function bustNewsCache(term) {
+  try {
+    const pattern = `%${term}%`;
+    const result = db.prepare(
+      "DELETE FROM api_cache WHERE value LIKE ? AND value LIKE '%totalResults%'"
+    ).run(pattern);
+    return result.changes;
+  } catch (e) {
+    console.error("Cache bust error:", e);
+    return 0;
+  }
+}
