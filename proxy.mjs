@@ -11,6 +11,11 @@ import { fileURLToPath } from "url";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import { getCache, setCache, bustNewsCache } from "./src/cache.js";
+import cron from "node-cron";
+import {
+  readConfig, writeConfig, isLastWednesdayOfMonth, nextLastWednesday,
+  exchangeCodeForTokens, refreshAccessToken, htmlToPdf, createGmailDraft, generateReportHTML,
+} from "./report-mailer.mjs";
 
 // ── Service Account JWT Token Cache ──────────────────────────────────────────
 let _vertexTokenCache = null;
@@ -460,8 +465,149 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Reports: save config ─────────────────────────────────────────────────
+  if (url === "/reports/config" && req.method === "POST") {
+    let body = "";
+    req.on("data", d => body += d);
+    req.on("end", () => {
+      try {
+        const incoming = JSON.parse(body);
+        const existing = readConfig();
+        writeConfig({ ...existing, ...incoming });
+        res.writeHead(200, { "Access-Control-Allow-Origin": ALLOWED_ORIGIN, "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        res.writeHead(400, { "Access-Control-Allow-Origin": ALLOWED_ORIGIN, "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (url === "/reports/config" && req.method === "GET") {
+    const cfg = readConfig();
+    // Never return tokens to browser — just return safe fields
+    const { gmailTokens, ...safe } = cfg;
+    safe.gmailConnected = !!(gmailTokens?.refresh_token);
+    safe.nextRun = nextLastWednesday()?.toISOString() || null;
+    res.writeHead(200, { "Access-Control-Allow-Origin": ALLOWED_ORIGIN, "Content-Type": "application/json" });
+    res.end(JSON.stringify(safe));
+    return;
+  }
+
+  // ── Gmail OAuth callback ─────────────────────────────────────────────────
+  if (url.startsWith("/gmail/callback")) {
+    const params = new URL(url, "http://localhost").searchParams;
+    const code = params.get("code");
+    const error = params.get("error");
+    if (error || !code) {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><h2 style="font-family:sans-serif;color:#dc2626">Gmail auth failed: ${error||"no code"}</h2><script>window.close();</script></body></html>`);
+      return;
+    }
+    try {
+      const cfg = readConfig();
+      const tokens = await exchangeCodeForTokens(
+        code, cfg.gmailClientId, cfg.gmailClientSecret,
+        `http://localhost:${PORT}/gmail/callback`
+      );
+      if (tokens.refresh_token) {
+        writeConfig({ ...cfg, gmailTokens: { refresh_token: tokens.refresh_token, access_token: tokens.access_token } });
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(`<html><body style="font-family:sans-serif;padding:40px"><h2 style="color:#16a34a">✓ Gmail connected successfully</h2><p>You can close this window and return to the app.</p><script>setTimeout(()=>window.close(),2000);</script></body></html>`);
+      } else {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(`<html><body style="font-family:sans-serif;padding:40px"><h2 style="color:#dc2626">No refresh token received.</h2><p>Make sure you revoke previous access at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a> then try again.</p></body></html>`);
+      }
+    } catch (e) {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<html><body><h2 style="font-family:sans-serif;color:#dc2626">Error: ${e.message}</h2><script>window.close();</script></body></html>`);
+    }
+    return;
+  }
+
+  // ── Gmail disconnect ─────────────────────────────────────────────────────
+  if (url === "/gmail/disconnect" && req.method === "POST") {
+    const cfg = readConfig();
+    delete cfg.gmailTokens;
+    writeConfig(cfg);
+    res.writeHead(200, { "Access-Control-Allow-Origin": ALLOWED_ORIGIN, "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // ── Reports: manual trigger or cron trigger ──────────────────────────────
+  if (url === "/reports/trigger" && req.method === "POST") {
+    let body = "";
+    req.on("data", d => body += d);
+    req.on("end", async () => {
+      try {
+        const { companies } = JSON.parse(body || "{}");
+        const results = await runMonthlyReports(companies);
+        res.writeHead(200, { "Access-Control-Allow-Origin": ALLOWED_ORIGIN, "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, results }));
+      } catch (e) {
+        console.error("[reports] trigger error:", e.message);
+        res.writeHead(500, { "Access-Control-Allow-Origin": ALLOWED_ORIGIN, "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   res.writeHead(404, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: "Unknown proxy path: " + url }));
+});
+
+// ── Monthly report runner ─────────────────────────────────────────────────────
+
+async function runMonthlyReports(companiesOverride) {
+  const cfg = readConfig();
+  const companies = companiesOverride || cfg.selectedCompanies || [];
+  const recipients = cfg.recipients || [];
+  const tokens = cfg.gmailTokens;
+
+  if (!companies.length)  throw new Error("No companies selected for monthly reports");
+  if (!recipients.length) throw new Error("No recipient emails configured");
+  if (!tokens?.refresh_token) throw new Error("Gmail not connected — authenticate in Admin → Monthly Reports");
+
+  const accessToken = await refreshAccessToken(tokens.refresh_token, cfg.gmailClientId, cfg.gmailClientSecret);
+  const dateStr = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  const monthStr = new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+  const results = [];
+  for (const company of companies) {
+    try {
+      console.log(`[reports] Generating report for ${company.name}…`);
+      const html = generateReportHTML(company, dateStr);
+      const pdfBuffer = await htmlToPdf(html);
+      const subject = `${company.name} — Radical Brand Intelligence Report — ${monthStr}`;
+      const pdfFilename = `${company.name.replace(/[^a-zA-Z0-9]/g, "_")}_Report_${new Date().toISOString().slice(0,7)}.pdf`;
+
+      for (const to of recipients) {
+        const result = await createGmailDraft({ accessToken, to, subject, htmlBody: html, pdfBuffer, pdfFilename });
+        console.log(`[reports] Draft created for ${company.name} → ${to}: status ${result.status}`);
+        results.push({ company: company.name, to, draftId: result.body?.id, status: result.status });
+      }
+    } catch (e) {
+      console.error(`[reports] Failed for ${company.name}:`, e.message);
+      results.push({ company: company.name, error: e.message });
+    }
+  }
+  return results;
+}
+
+// ── Cron: last Wednesday of every month at 8:00 am ───────────────────────────
+
+cron.schedule("0 8 * * 3", async () => {
+  if (!isLastWednesdayOfMonth(new Date())) return;
+  console.log("[cron] Last Wednesday of month — generating monthly reports…");
+  try {
+    const results = await runMonthlyReports();
+    console.log("[cron] Monthly reports done:", results);
+  } catch (e) {
+    console.error("[cron] Monthly reports failed:", e.message);
+  }
 });
 
 server.listen(PORT, () => {

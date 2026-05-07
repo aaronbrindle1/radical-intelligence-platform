@@ -2822,6 +2822,98 @@ function Admin({ settings, outlets, companies, onUpdateSettings, onUpdateOutlets
   const [outletSearch, setOutletSearch] = useState("");
   const [outletTier, setOutletTier] = useState("All");
 
+  // ── Monthly Reports state ─────────────────────────────────────────────────
+  const [mrConfig, setMrConfig] = useState(null);   // loaded from proxy
+  const [mrLoading, setMrLoading] = useState(false);
+  const [mrTriggering, setMrTriggering] = useState(false);
+  const [mrClientId, setMrClientId] = useState("");
+  const [mrClientSecret, setMrClientSecret] = useState("");
+  const [mrRecipients, setMrRecipients] = useState("");
+  const [mrSelected, setMrSelected] = useState({});  // { companyId: true }
+
+  const portfolioCompanies = companies.filter(c => !c.isFirm);
+
+  const loadMrConfig = async () => {
+    try {
+      const r = await fetch("http://localhost:3001/reports/config");
+      if (!r.ok) return;
+      const cfg = await r.json();
+      setMrConfig(cfg);
+      setMrClientId(cfg.gmailClientId || "");
+      setMrClientSecret(cfg.gmailClientSecret || "");
+      setMrRecipients((cfg.recipients || []).join(", "));
+      const sel = {};
+      (cfg.selectedCompanies || []).forEach(c => { sel[c.id] = true; });
+      setMrSelected(sel);
+    } catch { /* proxy not running */ }
+  };
+
+  useEffect(() => { if (tab === "reports") loadMrConfig(); }, [tab]);
+
+  const saveMrConfig = async () => {
+    const selectedCompanies = portfolioCompanies
+      .filter(c => mrSelected[c.id])
+      .map(c => ({ id: c.id, name: c.name, categories: c.categories, description: c.description, website: c.website, runs: c.runs, sovRun: c.sovRun }));
+    const recipients = mrRecipients.split(/[,\n]/).map(e => e.trim()).filter(Boolean);
+    const cfg = {
+      gmailClientId: mrClientId.trim(),
+      gmailClientSecret: mrClientSecret.trim(),
+      selectedCompanies,
+      recipients,
+    };
+    try {
+      const r = await fetch("http://localhost:3001/reports/config", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cfg),
+      });
+      if (r.ok) { toast("Monthly report settings saved", "success"); await loadMrConfig(); }
+      else toast("Save failed — is the proxy running?", "error");
+    } catch { toast("Proxy unreachable — restart START-MAC.command", "error"); }
+  };
+
+  const connectGmail = () => {
+    if (!mrClientId.trim()) { toast("Enter your Google Client ID first", "error"); return; }
+    const params = new URLSearchParams({
+      client_id: mrClientId.trim(),
+      redirect_uri: "http://localhost:3001/gmail/callback",
+      response_type: "code",
+      scope: "https://www.googleapis.com/auth/gmail.compose",
+      access_type: "offline",
+      prompt: "consent",
+    });
+    window.open(`https://accounts.google.com/o/oauth2/v2/auth?${params}`, "_blank", "width=500,height=600");
+    setTimeout(loadMrConfig, 5000);
+  };
+
+  const disconnectGmail = async () => {
+    try {
+      await fetch("http://localhost:3001/gmail/disconnect", { method: "POST" });
+      toast("Gmail disconnected", "success");
+      await loadMrConfig();
+    } catch { toast("Proxy unreachable", "error"); }
+  };
+
+  const triggerNow = async () => {
+    setMrTriggering(true);
+    try {
+      await saveMrConfig();
+      const selectedCompanies = portfolioCompanies
+        .filter(c => mrSelected[c.id])
+        .map(c => ({ id: c.id, name: c.name, categories: c.categories, description: c.description, website: c.website, runs: c.runs, sovRun: c.sovRun }));
+      const r = await fetch("http://localhost:3001/reports/trigger", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companies: selectedCompanies }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        const draftCount = (d.results || []).filter(x => !x.error).length;
+        toast(`${draftCount} draft${draftCount !== 1 ? "s" : ""} created in Gmail`, "success");
+      } else {
+        toast("Error: " + (d.error || "unknown"), "error");
+      }
+    } catch (e) { toast("Failed: " + e.message, "error"); }
+    setMrTriggering(false);
+  };
+
   const { apiKeys, features } = settings;
 
   const setKey = (k, v) => onUpdateSettings({ ...settings, apiKeys: { ...apiKeys, [k]: v } });
@@ -2935,7 +3027,7 @@ function Admin({ settings, outlets, companies, onUpdateSettings, onUpdateOutlets
     e.target.value = "";
   };
 
-  const adminTabs = ["keys","features","outlets","data"];
+  const adminTabs = ["keys","features","outlets","data","reports"];
 
   return (
     <div style={{ padding:"28px 32px", maxWidth:900, margin:"0 auto" }}>
@@ -2944,7 +3036,7 @@ function Admin({ settings, outlets, companies, onUpdateSettings, onUpdateOutlets
       <div style={{ display:"flex", gap:2, marginBottom:24, borderBottom:`1px solid ${T.border}` }}>
         {adminTabs.map(t => (
           <button key={t} onClick={() => setTab(t)} style={{ padding:"8px 16px", border:"none", background:"transparent", cursor:"pointer", fontSize:12, fontWeight:600, color:tab===t ? T.accent : T.dim, borderBottom:tab===t ? `2px solid ${T.accent}` : "2px solid transparent", marginBottom:-1, textTransform:"capitalize" }}>
-            {t === "keys" ? "API Keys" : t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === "keys" ? "API Keys" : t === "reports" ? "📧 Monthly Reports" : t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
@@ -3248,6 +3340,117 @@ function Admin({ settings, outlets, companies, onUpdateSettings, onUpdateOutlets
             <div style={{ fontSize:11, color:T.dim, marginBottom:12 }}>Reset all data including API keys, companies, and run history. Cannot be undone.</div>
             <Btn onClick={handleReset} variant="danger">Reset all data</Btn>
           </div>
+        </div>
+      )}
+
+      {tab === "reports" && (
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+
+          {/* Schedule info */}
+          <div style={{ background:`${T.accent}12`, border:`1px solid ${T.accent}40`, borderRadius:12, padding:"14px 18px", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
+            <div>
+              <div style={{ fontSize:13, fontWeight:700, color:T.accent }}>📧 Monthly Report Schedule</div>
+              <div style={{ fontSize:12, color:T.dim, marginTop:3 }}>Runs automatically on the last Wednesday of every month at 8:00 am local time</div>
+            </div>
+            <div style={{ textAlign:"right" }}>
+              <div style={{ fontSize:11, color:T.dim }}>Next run</div>
+              <div style={{ fontSize:13, fontWeight:700, color:T.text }}>
+                {mrConfig?.nextRun
+                  ? new Date(mrConfig.nextRun).toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" })
+                  : "—"}
+              </div>
+            </div>
+          </div>
+
+          {/* Gmail OAuth */}
+          <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"16px 20px" }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:4 }}>Gmail Connection</div>
+            <div style={{ fontSize:11, color:T.dim, marginBottom:14, lineHeight:1.6 }}>
+              Reports are created as <strong style={{ color:T.text }}>Drafts</strong> in your Gmail — never sent automatically.<br />
+              You need a Google Cloud project with the Gmail API enabled.{" "}
+              <a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noopener noreferrer" style={{ color:T.accent }}>Enable it here ↗</a>
+              , then create OAuth credentials (type: <em>Desktop app</em>) and add <code style={{ background:T.ghost, padding:"1px 5px", borderRadius:4 }}>http://localhost:3001/gmail/callback</code> as an authorised redirect URI.
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
+              <div>
+                <div style={{ fontSize:11, color:T.dim, marginBottom:4 }}>Google Client ID</div>
+                <Input value={mrClientId} onChange={setMrClientId} placeholder="123456789-abc.apps.googleusercontent.com" />
+              </div>
+              <div>
+                <div style={{ fontSize:11, color:T.dim, marginBottom:4 }}>Google Client Secret</div>
+                <Input value={mrClientSecret} onChange={setMrClientSecret} placeholder="GOCSPX-…" />
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+              {mrConfig?.gmailConnected ? (
+                <>
+                  <span style={{ fontSize:12, color:"#4ade80", fontWeight:700 }}>● Gmail connected</span>
+                  <Btn onClick={disconnectGmail} variant="ghost" style={{ fontSize:11 }}>Disconnect</Btn>
+                  <Btn onClick={() => { toast("Re-authorising…"); connectGmail(); }} variant="ghost" style={{ fontSize:11 }}>Re-authorise</Btn>
+                </>
+              ) : (
+                <Btn onClick={connectGmail} variant="primary" style={{ fontSize:12 }}>Connect Gmail →</Btn>
+              )}
+              <Btn onClick={loadMrConfig} variant="ghost" style={{ fontSize:11 }}>↻ Refresh</Btn>
+            </div>
+          </div>
+
+          {/* Recipients */}
+          <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"16px 20px" }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:4 }}>Recipients</div>
+            <div style={{ fontSize:11, color:T.dim, marginBottom:10 }}>Email addresses to create drafts for — one per line or comma-separated.</div>
+            <textarea
+              value={mrRecipients}
+              onChange={e => setMrRecipients(e.target.value)}
+              placeholder={"partner@radical.vc\nanalyst@radical.vc"}
+              rows={3}
+              style={{ width:"100%", background:"rgba(0,0,0,0.3)", border:`1px solid ${T.border}`, borderRadius:7, padding:"8px 11px", fontSize:12, color:T.text, outline:"none", resize:"vertical", boxSizing:"border-box" }}
+            />
+          </div>
+
+          {/* Company selection */}
+          <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"16px 20px" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+              <div>
+                <div style={{ fontSize:13, fontWeight:700, color:T.text }}>Companies to Report On</div>
+                <div style={{ fontSize:11, color:T.dim, marginTop:2 }}>
+                  {Object.values(mrSelected).filter(Boolean).length} of {portfolioCompanies.length} selected
+                </div>
+              </div>
+              <div style={{ display:"flex", gap:6 }}>
+                <Btn onClick={() => { const s = {}; portfolioCompanies.forEach(c => s[c.id] = true); setMrSelected(s); }} variant="ghost" style={{ fontSize:11 }}>All</Btn>
+                <Btn onClick={() => setMrSelected({})} variant="ghost" style={{ fontSize:11 }}>None</Btn>
+              </div>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(220px, 1fr))", gap:6, maxHeight:320, overflowY:"auto" }}>
+              {portfolioCompanies.map(c => (
+                <label key={c.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 10px", borderRadius:8, border:`1px solid ${mrSelected[c.id] ? T.accent+"60" : T.border}`, background:mrSelected[c.id] ? `${T.accent}10` : "transparent", cursor:"pointer" }}>
+                  <input type="checkbox" checked={!!mrSelected[c.id]} onChange={e => setMrSelected(prev => ({ ...prev, [c.id]: e.target.checked }))} style={{ cursor:"pointer" }} />
+                  <span style={{ fontSize:12, fontWeight:600, color:T.text }}>{c.name}</span>
+                  {c.runs?.[0] && <span style={{ fontSize:10, color:T.faint, marginLeft:"auto" }}>{c.runs[0].mediaCount||0}a</span>}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Save + manual trigger */}
+          <div style={{ display:"flex", gap:10, justifyContent:"flex-end", flexWrap:"wrap" }}>
+            <Btn onClick={saveMrConfig} variant="ghost">Save settings</Btn>
+            <Btn
+              onClick={triggerNow}
+              disabled={mrTriggering || !mrConfig?.gmailConnected || Object.values(mrSelected).filter(Boolean).length === 0}
+              variant="primary"
+              style={{ minWidth:180 }}
+            >
+              {mrTriggering
+                ? <><Spinner /> Generating drafts…</>
+                : `▶ Create ${Object.values(mrSelected).filter(Boolean).length} draft${Object.values(mrSelected).filter(Boolean).length !== 1 ? "s" : ""} now`}
+            </Btn>
+          </div>
+
+          {!mrConfig?.gmailConnected && (
+            <div style={{ fontSize:11, color:T.faint, textAlign:"right" }}>Connect Gmail above to enable draft creation</div>
+          )}
         </div>
       )}
     </div>
