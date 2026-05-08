@@ -10,6 +10,7 @@ dist/
 gcp-key.json
 *.key.json
 *-key.json
+report-config.json
 
 # Cache
 api_cache.sqlite
