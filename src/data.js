@@ -188,7 +188,7 @@ export const DEFAULT_OUTLETS = [
   {id:12,  name:"The Atlantic",                    tier:1, cat:"General",     domain:"theatlantic.com"},
   {id:13,  name:"Associated Press",                tier:1, cat:"General",     domain:"apnews.com"},
   {id:14,  name:"The Washington Post",             tier:1, cat:"General",     domain:"washingtonpost.com"},
-  {id:15,  name:"Business Insider",                tier:1, cat:"General",     domain:"businessinsider.com"},
+  {id:15,  name:"Business Insider",                tier:2, cat:"General",     domain:"businessinsider.com"},
   {id:16,  name:"Yahoo Finance",                   tier:1, cat:"Finance",     domain:"finance.yahoo.com"},
   {id:17,  name:"MarketWatch",                     tier:1, cat:"Finance",     domain:"marketwatch.com"},
   {id:18,  name:"Barron's",                        tier:1, cat:"Finance",     domain:"barrons.com"},

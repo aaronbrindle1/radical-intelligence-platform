@@ -238,7 +238,7 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     "forbes": 1, "forbes.com": 1,
     "fortune": 1, "fortune.com": 1,
     "the atlantic": 1, "atlantic": 1,
-    "business insider": 1, "businessinsider": 1, "insider": 1,
+    "business insider": 2, "businessinsider": 2, "insider": 2,
     "yahoo finance": 1, "yahoo! finance": 1,
     "marketwatch": 1,
     "barron's": 1, "barrons": 1,
