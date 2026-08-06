@@ -2264,6 +2264,7 @@ function BriefingCharts({ company, persona = "exec" }) {
                 <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
                   <span style={{ fontSize:10, fontWeight:700, color:T.accent, background:`${T.accent}18`, padding:"2px 7px", borderRadius:4 }}>{a.source || "Unknown"}</span>
                   {a.tier === 1 && <span style={{ fontSize:9, color:"#818cf8", background:"#818cf820", padding:"1px 5px", borderRadius:3 }}>Tier 1</span>}
+                  {a.paywalled && <span style={{ fontSize:9, color:"#f59e0b", background:"#f59e0b20", padding:"1px 5px", borderRadius:3 }}>🔒 Paywalled</span>}
                   <span style={{ fontSize:10, color:T.faint, marginLeft:"auto" }}>{a.date ? a.date.slice(0,10) : ""}</span>
                 </div>
                 <div style={{ fontSize:12, fontWeight:600, color:T.text, lineHeight:1.4, marginBottom:4 }}>{a.title || "(No title)"}</div>

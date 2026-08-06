@@ -191,7 +191,7 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
 
   const seen = new Set();
   let articles = [...a1, ...a2, ...a3, ...a4, ...a5].filter(a => {
-    if (!a.url || seen.has(a.url) || a.title === "[Removed]") return false;
+    if (!a.url || seen.has(a.url)) return false;
     seen.add(a.url); return true;
   });
 
@@ -208,21 +208,36 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     ]);
     const seen2 = new Set();
     articles = [...b1, ...b2, ...b3, ...b4].filter(a => {
-      if (!a.url || seen2.has(a.url) || a.title === "[Removed]") return false;
+      if (!a.url || seen2.has(a.url)) return false;
       seen2.add(a.url); return true;
     });
   }
 
-  // Build tier lookup from outlets list
-  const tierMap = {};
+  // Build tier lookup from outlets list — by name AND domain
+  const tierByName = {};
+  const tierByDomain = {};
   outlets.forEach(o => {
     const k = (o.name || "").toLowerCase();
-    tierMap[k] = o.tier || 2;
-    tierMap[k.replace(/^the\s+/, "")] = o.tier || 2;
+    tierByName[k] = o.tier || 2;
+    tierByName[k.replace(/^the\s+/, "")] = o.tier || 2;
+    if (o.domain) tierByDomain[o.domain.replace(/^www\./, "")] = o.tier || 2;
   });
-  const getTier = name => {
+  const getTier = (name, url) => {
     const k = (name || "").toLowerCase();
-    return tierMap[k] || tierMap[k.replace(/^the\s+/, "")] || 2;
+    const byName = tierByName[k] || tierByName[k.replace(/^the\s+/, "")];
+    if (byName) return byName;
+    // Fallback: match by URL domain
+    if (url) {
+      try {
+        const host = new URL(url).hostname.replace(/^www\./, "");
+        const byDomain = tierByDomain[host];
+        if (byDomain) return byDomain;
+        // Partial match (e.g. nytimes.com matches sub.nytimes.com)
+        const partial = Object.keys(tierByDomain).find(d => host.endsWith(d));
+        if (partial) return tierByDomain[partial];
+      } catch {}
+    }
+    return 2;
   };
 
   return articles
@@ -231,17 +246,21 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     .slice(0, 100)
     .map((a, i) => {
       const src = a.source?.name || "Unknown";
-      const title = a.title || "";
+      const rawTitle = a.title || "";
+      // [Removed] means paywalled — keep article but use source name as title fallback
+      const title = (rawTitle === "[Removed]" || rawTitle === "")
+        ? `Coverage in ${src}` : rawTitle;
       const snippet = a.description || a.content?.slice(0, 200) || "";
       return {
         id: `n-${company.id}-${Date.now()}-${i}`,
         source: src,
-        tier: getTier(src),
+        tier: getTier(src, a.url),
         title, snippet,
         url: a.url || "",
         date: (a.publishedAt || "").slice(0, 10),
         sentiment: quickSentiment(title, snippet),
         isLive: true,
+        paywalled: rawTitle === "[Removed]",
       };
     });
 }
