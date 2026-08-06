@@ -385,41 +385,50 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
 async function fetchGoogleNewsRSS(query, notPhrases = []) {
   try {
     const res = await fetch(`http://localhost:3001/gnews?q=${encodeURIComponent(query)}`);
-    if (!res.ok) return [];
+    if (!res.ok) { console.warn("[Google News RSS] proxy error:", res.status); return []; }
     const xml = await res.text();
-    if (!xml || xml.length < 100) return [];
+    if (!xml || xml.length < 100) { console.warn("[Google News RSS] empty response"); return []; }
 
     const items = [];
     const parts = xml.split("<item>").slice(1);
-    for (const raw of parts) {
-      const getTag = (tag) => {
-        const m = raw.match(new RegExp("<" + tag + "[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/" + tag + ">"));
-        return m ? m[1].trim().replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">") : "";
-      };
-      const title = getTag("title");
-      const pubDate = getTag("pubDate");
-      const rawDesc = getTag("description").replace(/<[^>]+>/g, "").slice(0, 300).trim();
 
-      // Extract URL from link, guid, or href attribute
-      const linkM = raw.match(/<link>(https?:\/\/[^<]+)<\/link>/) ||
-                    raw.match(/href="(https?:\/\/[^"]+)"/) ||
-                    raw.match(/<guid[^>]*>(https?:\/\/[^<]+)<\/guid>/);
+    for (const raw of parts) {
+      // Title — strip " - Source Name" suffix that Google appends
+      const titleM = raw.match(/<title[^>]*>([^<]+)<\/title>/);
+      if (!titleM) continue;
+      const fullTitle = titleM[1].replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").trim();
+
+      // Source — from <source url="https://...">Source Name</source>
+      const srcM = raw.match(/<source\s+url="([^"]+)">([^<]+)<\/source>/);
+      const sourceUrl = srcM ? srcM[1].trim() : "";
+      const sourceName = srcM ? srcM[2].trim() : "";
+
+      // Strip " - Source Name" from title end
+      const title = sourceName ? fullTitle.replace(new RegExp("\s*-\s*" + sourceName.replace(/[.*+?^${}()|[\]\]/g,"\$&") + "\s*$"), "").trim() : fullTitle;
+
+      // Google News link (redirect URL) — use as the clickable URL
+      const linkM = raw.match(/<link>([^<]+)<\/link>/);
       const link = linkM ? linkM[1].trim() : "";
 
-      // Extract source name
-      const srcM = raw.match(/<source[^>]*>([^<]+)<\/source>/);
-      const source = srcM ? srcM[1].trim() : extractDomainName(link);
-
+      // Date
+      const dateM = raw.match(/<pubDate>([^<]+)<\/pubDate>/);
       let date = "";
-      try { if (pubDate) date = new Date(pubDate).toISOString().slice(0, 10); } catch {}
+      try { if (dateM) date = new Date(dateM[1].trim()).toISOString().slice(0, 10); } catch {}
+
+      // Snippet from description — strip HTML tags
+      const descM = raw.match(/<description>([^<]*(?:<(?!\/description>)[^<]*)*)<\/description>/);
+      const snippet = descM ? descM[1].replace(/<[^>]+>/g,"").replace(/&amp;/g,"&").replace(/&nbsp;/g," ").replace(/&lt;/g,"<").replace(/&gt;/g,">").slice(0,300).trim() : "";
 
       if (!title || !link) continue;
-      if (title.toLowerCase().includes("google news")) continue;
-      if (!passesNotFilter({ title, description: rawDesc }, notPhrases)) continue;
+      if (!passesNotFilter({ title, description: snippet }, notPhrases)) continue;
 
-      items.push({ title, url: link, source, snippet: rawDesc, date, via: "google-news" });
+      // Use source URL domain to get proper name if srcM missing
+      const finalSource = sourceName || extractDomainName(sourceUrl || link);
+
+      items.push({ title, url: link, source: finalSource, snippet, date, via: "google-news" });
     }
-    console.log("[Google News RSS]", JSON.stringify(query), "->", items.length, "articles");
+
+    console.log("[Google News RSS]", JSON.stringify(query), "->", items.length, "articles from:", [...new Set(items.map(i=>i.source))].slice(0,10).join(", "));
     return items;
   } catch (e) {
     console.warn("[Google News RSS] Failed:", e.message);
