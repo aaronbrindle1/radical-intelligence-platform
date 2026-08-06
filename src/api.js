@@ -222,8 +222,27 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     tierByName[k.replace(/^the\s+/, "")] = o.tier || 2;
     if (o.domain) tierByDomain[o.domain.replace(/^www\./, "")] = o.tier || 2;
   });
+  // Explicit aliases for outlets NewsAPI returns with non-standard names
+  const TIER_ALIASES = {
+    "nyt": 1, "new york times": 1, "the new york times": 1, "nytimes": 1,
+    "wsj": 1, "wall street journal": 1, "the wall street journal": 1,
+    "washington post": 1, "the washington post": 1, "wapo": 1,
+    "financial times": 1, "ft": 1,
+    "bloomberg": 1, "bloomberg news": 1, "bloomberg businessweek": 1,
+    "reuters": 1, "associated press": 1, "ap": 1, "ap news": 1,
+    "bbc": 1, "bbc news": 1,
+    "wired": 1, "techcrunch": 1, "the verge": 1, "verge": 1,
+    "fortune": 1, "forbes": 1, "cnbc": 1,
+    "times of india": 2, "next big future": 3, "daemonology": 3, "forkast": 3,
+    "breitbart": null, "newsmax": null, "oann": null,  // null = block
+  };
   const getTier = (name, url) => {
-    const k = (name || "").toLowerCase();
+    const k = (name || "").toLowerCase().trim();
+    // Check explicit aliases first
+    if (k in TIER_ALIASES) {
+      const t = TIER_ALIASES[k];
+      return t === null ? 99 : t;  // 99 = blocked
+    }
     const byName = tierByName[k] || tierByName[k.replace(/^the\s+/, "")];
     if (byName) return byName;
     // Fallback: match by URL domain
@@ -232,7 +251,6 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
         const host = new URL(url).hostname.replace(/^www\./, "");
         const byDomain = tierByDomain[host];
         if (byDomain) return byDomain;
-        // Partial match (e.g. nytimes.com matches sub.nytimes.com)
         const partial = Object.keys(tierByDomain).find(d => host.endsWith(d));
         if (partial) return tierByDomain[partial];
       } catch {}
@@ -243,6 +261,7 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
   return articles
     .filter(a => !BLOCKED_DOMAINS.some(d => (a.url || "").toLowerCase().includes(d)))
     .filter(a => passesNotFilter(a, notPhrases))
+    .filter(a => getTier(a.source?.name, a.url) !== 99)
     .slice(0, 100)
     .map((a, i) => {
       const src = a.source?.name || "Unknown";

@@ -21,6 +21,11 @@ export const BLOCKED_DOMAINS = [
   "cnblogs.com","habr.com","csdn.net","segmentfault.com","juejin.cn",
   "wwwhatsnew.com","xataka.com",
   "youtube.com","youtu.be","vimeo.com","dailymotion.com",
+  // Low-quality / partisan / aggregator outlets — not appropriate for VC intelligence
+  "breitbart.com","infowars.com","naturalnews.com","thegatewaypundit.com",
+  "dailywire.com","newsmax.com","oann.com","rumble.com",
+  "daemonology.net","forkast.news","nextbigfuture.com",
+  "prnewswire.com","businesswire.com","globenewswire.com","accesswire.com",
 ];
 
 export const BOOLEAN_QUERIES = {
@@ -206,10 +211,10 @@ export const DEFAULT_OUTLETS = [
   {id:54,  name:"Quanta Magazine",                 tier:1, cat:"Science",     domain:"quantamagazine.org"},
   {id:55,  name:"MIT Technology Review",           tier:1, cat:"Tech",        domain:"technologyreview.com"},
   // ── Tier 2: Core Tech ───────────────────────────────────────────────────────
-  {id:100, name:"TechCrunch",                      tier:2, cat:"Tech",        domain:"techcrunch.com"},
-  {id:101, name:"Wired",                           tier:2, cat:"Tech",        domain:"wired.com"},
+  {id:100, name:"TechCrunch",                      tier:1, cat:"Tech",        domain:"techcrunch.com"},
+  {id:101, name:"Wired",                           tier:1, cat:"Tech",        domain:"wired.com"},
   {id:102, name:"VentureBeat",                     tier:2, cat:"Tech",        domain:"venturebeat.com"},
-  {id:103, name:"The Verge",                       tier:2, cat:"Tech",        domain:"theverge.com"},
+  {id:103, name:"The Verge",                       tier:1, cat:"Tech",        domain:"theverge.com"},
   {id:104, name:"Ars Technica",                    tier:2, cat:"Tech",        domain:"arstechnica.com"},
   {id:105, name:"IEEE Spectrum",                   tier:2, cat:"Tech",        domain:"spectrum.ieee.org"},
   {id:106, name:"CNET",                            tier:2, cat:"Tech",        domain:"cnet.com"},
