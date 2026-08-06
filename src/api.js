@@ -340,30 +340,117 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     return 2; // Default to tier 2 for unknown outlets
   };
 
-  return articles
+  // ── Google News RSS — supplements NewsAPI with NYT, WSJ, FT etc ─────────────
+  const gnArticles = await fetchGoogleNewsRSS(simpleQuery, notPhrases);
+
+  // Merge NewsAPI + Google News, deduplicate by URL
+  const allArticles = [...articles, ...gnArticles];
+  const seenUrls = new Set();
+  const merged = allArticles.filter(a => {
+    if (!a.url || seenUrls.has(a.url)) return false;
+    seenUrls.add(a.url);
+    return true;
+  });
+
+  return merged
     .filter(a => !BLOCKED_DOMAINS.some(d => (a.url || "").toLowerCase().includes(d)))
     .filter(a => passesNotFilter(a, notPhrases))
     .filter(a => getTier(a.source?.name, a.url) !== 99)
     .slice(0, 100)
     .map((a, i) => {
-      const src = a.source?.name || "Unknown";
+      const src = a.source?.name || a.source || "Unknown";
       const rawTitle = a.title || "";
-      // [Removed] means paywalled — keep article but use source name as title fallback
       const title = (rawTitle === "[Removed]" || rawTitle === "")
         ? `Coverage in ${src}` : rawTitle;
-      const snippet = a.description || a.content?.slice(0, 200) || "";
+      const snippet = a.description || a.snippet || a.content?.slice(0, 200) || "";
       return {
         id: `n-${company.id}-${Date.now()}-${i}`,
         source: src,
         tier: getTier(src, a.url),
         title, snippet,
         url: a.url || "",
-        date: (a.publishedAt || "").slice(0, 10),
+        date: (a.publishedAt || a.date || "").slice(0, 10),
         sentiment: quickSentiment(title, snippet),
         isLive: true,
         paywalled: rawTitle === "[Removed]",
+        via: a.via || "newsapi",
       };
     });
+}
+
+// ── Google News RSS fetch ─────────────────────────────────────────────────────
+// Fetches Google News RSS via proxy and parses articles with source/title/url/date.
+// No API key required. Supplements NewsAPI with NYT, WSJ, FT, and other paywalled outlets.
+
+async function fetchGoogleNewsRSS(query, notPhrases = []) {
+  try {
+    const encoded = encodeURIComponent(query);
+    // Use proxy to avoid CORS — proxy forwards to news.google.com
+    const url = `http://localhost:3001/gnews?q=${encoded}`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const xml = await res.text();
+
+    // Parse RSS items
+    const items = [];
+    const itemMatches = xml.matchAll(/<item>([\s\S]*?)<\/item>/g);
+    for (const match of itemMatches) {
+      const item = match[1];
+      const get = (tag) => {
+        const m = item.match(new RegExp(`<${tag}[^>]*><!\[CDATA\[([\s\S]*?)\]\]><\/${tag}>|<${tag}[^>]*>([^<]*)<\/${tag}>`));
+        return m ? (m[1] || m[2] || "").trim() : "";
+      };
+      const title = get("title");
+      const link  = get("link") || item.match(/<link\s*\/>([^<]+)/)?.[1]?.trim() || "";
+      const pubDate = get("pubDate");
+      const source = get("source") || extractDomainName(link);
+      const snippet = get("description")?.replace(/<[^>]+>/g, "").slice(0, 300) || "";
+
+      if (!title || !link) continue;
+      if (!passesNotFilter({ title, description: snippet }, notPhrases)) continue;
+
+      // Parse date
+      let date = "";
+      try { date = pubDate ? new Date(pubDate).toISOString().slice(0, 10) : ""; } catch {}
+
+      items.push({ title, url: link, source, snippet, date, via: "google-news" });
+    }
+    console.log(`[Google News RSS] "${query}" → ${items.length} articles`);
+    return items;
+  } catch (e) {
+    console.warn("[Google News RSS] Failed:", e.message);
+    return [];
+  }
+}
+
+function extractDomainName(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    // Convert nytimes.com → "The New York Times" etc using a small lookup
+    const DOMAIN_NAMES = {
+      "nytimes.com": "The New York Times",
+      "wsj.com": "The Wall Street Journal",
+      "ft.com": "Financial Times",
+      "bloomberg.com": "Bloomberg",
+      "reuters.com": "Reuters",
+      "washingtonpost.com": "The Washington Post",
+      "theguardian.com": "The Guardian",
+      "economist.com": "The Economist",
+      "forbes.com": "Forbes",
+      "fortune.com": "Fortune",
+      "cnbc.com": "CNBC",
+      "techcrunch.com": "TechCrunch",
+      "wired.com": "Wired",
+      "theverge.com": "The Verge",
+      "axios.com": "Axios",
+      "apnews.com": "Associated Press",
+      "bbc.com": "BBC News", "bbc.co.uk": "BBC News",
+      "businessinsider.com": "Business Insider",
+      "technologyreview.com": "MIT Technology Review",
+      "theatlantic.com": "The Atlantic",
+    };
+    return DOMAIN_NAMES[host] || host;
+  } catch { return "Unknown"; }
 }
 
 // ── Yutori Scout (persistent background monitor) ──────────────────────────────

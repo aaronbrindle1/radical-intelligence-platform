@@ -477,6 +477,31 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Google News RSS proxy ────────────────────────────────────────────────────
+  if (url.startsWith("/gnews")) {
+    const qs = new URL("http://localhost" + url).searchParams;
+    const q = qs.get("q") || "";
+    if (!q) { res.writeHead(400); res.end("{}"); return; }
+    const gnUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`;
+    console.log("[gnews] →", gnUrl);
+    https.get(gnUrl, { headers: { "User-Agent": "Mozilla/5.0 (compatible; RIPbot/1.0)" } }, gnRes => {
+      const chunks = [];
+      gnRes.on("data", c => chunks.push(c));
+      gnRes.on("end", () => {
+        const xml = Buffer.concat(chunks).toString("utf8");
+        res.writeHead(200, {
+          "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+          "Content-Type": "application/rss+xml; charset=utf-8",
+        });
+        res.end(xml);
+      });
+    }).on("error", e => {
+      console.warn("[gnews] Error:", e.message);
+      res.writeHead(502); res.end("{}");
+    });
+    return;
+  }
+
   // ── Vertex diagnostics — GET /vertex-test ────────────────────────────────
   if (url === "/vertex-test") {
     const token = await getVertexToken();
