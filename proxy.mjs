@@ -438,6 +438,45 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── NewsAPI debug — GET /newsapi-debug?q=QUERY&key=APIKEY ────────────────
+  if (url.startsWith("/newsapi-debug")) {
+    const qs = new URL("http://localhost" + url).searchParams;
+    const q = qs.get("q") || "Discovery Loop";
+    const key = qs.get("key") || "";
+    if (!key) {
+      res.writeHead(400, { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Pass ?q=QUERY&key=YOUR_NEWSAPI_KEY" }));
+      return;
+    }
+    const apiUrl = `https://newsapi.org/v2/everything?q=${encodeURIComponent(q)}&pageSize=100&sortBy=relevancy&language=en&apiKey=${key}`;
+    https.get(apiUrl, apiRes => {
+      let d = "";
+      apiRes.on("data", c => d += c);
+      apiRes.on("end", () => {
+        try {
+          const data = JSON.parse(d);
+          const articles = data.articles || [];
+          const sourceCounts = {};
+          const removed = [];
+          const sample = [];
+          articles.forEach(a => {
+            const src = a.source?.name || "Unknown";
+            sourceCounts[src] = (sourceCounts[src] || 0) + 1;
+            if (a.title === "[Removed]") removed.push(src);
+            else if (sample.length < 8) sample.push({ source: src, title: (a.title||"").slice(0,80), url: (a.url||"").slice(0,70) });
+          });
+          const sorted = Object.entries(sourceCounts).sort((a,b) => b[1]-a[1]);
+          res.writeHead(200, { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" });
+          res.end(JSON.stringify({ query: q, totalResults: data.totalResults, fetched: articles.length, removed: removed.length, sourceBreakdown: sorted, removedSources: [...new Set(removed)], sampleArticles: sample }, null, 2));
+        } catch(e) {
+          res.writeHead(500, { "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ error: e.message, raw: d.slice(0,500) }));
+        }
+      });
+    }).on("error", e => { res.writeHead(500, { "Access-Control-Allow-Origin": "*" }); res.end(JSON.stringify({ error: e.message })); });
+    return;
+  }
+
   // ── Vertex diagnostics — GET /vertex-test ────────────────────────────────
   if (url === "/vertex-test") {
     const token = await getVertexToken();
