@@ -384,56 +384,42 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
 
 async function fetchGoogleNewsRSS(query, notPhrases = []) {
   try {
-    const encoded = encodeURIComponent(query);
-    const url = `http://localhost:3001/gnews?q=${encoded}`;
-    const res = await fetch(url);
-    if (!res.ok) { console.warn("[Google News RSS] proxy returned", res.status); return []; }
+    const res = await fetch(`http://localhost:3001/gnews?q=${encodeURIComponent(query)}`);
+    if (!res.ok) return [];
     const xml = await res.text();
-    if (!xml || xml.length < 100) { console.warn("[Google News RSS] empty response"); return []; }
+    if (!xml || xml.length < 100) return [];
 
     const items = [];
-    // Split on <item> tags
-    const rawItems = xml.split("<item>").slice(1);
-    for (const raw of rawItems) {
-      // Title — strip CDATA
-      const titleM = raw.match(/<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
-      const title = titleM ? titleM[1].trim().replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">") : "";
+    const parts = xml.split("<item>").slice(1);
+    for (const raw of parts) {
+      const getTag = (tag) => {
+        const m = raw.match(new RegExp("<" + tag + "[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/" + tag + ">"));
+        return m ? m[1].trim().replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">") : "";
+      };
+      const title = getTag("title");
+      const pubDate = getTag("pubDate");
+      const rawDesc = getTag("description").replace(/<[^>]+>/g, "").slice(0, 300).trim();
 
-      // Link — Google News uses <link> as a text node after the tag (not inside it)
-      // Format: </title>
-<link>https://...
+      // Extract URL from link, guid, or href attribute
       const linkM = raw.match(/<link>(https?:\/\/[^<]+)<\/link>/) ||
                     raw.match(/href="(https?:\/\/[^"]+)"/) ||
                     raw.match(/<guid[^>]*>(https?:\/\/[^<]+)<\/guid>/);
-      let link = linkM ? linkM[1].trim() : "";
+      const link = linkM ? linkM[1].trim() : "";
 
-      // Google News wraps URLs in their redirect — extract the actual URL
-      if (link.includes("news.google.com/rss/articles")) {
-        // Keep the Google News URL as-is — it redirects to the article
-        // but extract source from the <source> tag instead
-      }
+      // Extract source name
+      const srcM = raw.match(/<source[^>]*>([^<]+)<\/source>/);
+      const source = srcM ? srcM[1].trim() : extractDomainName(link);
 
-      // Source name
-      const sourceM = raw.match(/<source[^>]*url="[^"]*"[^>]*>([^<]+)<\/source>/) ||
-                      raw.match(/<source[^>]*>([^<]+)<\/source>/);
-      const source = sourceM ? sourceM[1].trim() : extractDomainName(link);
-
-      // Date
-      const dateM = raw.match(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/);
       let date = "";
-      try { if (dateM) date = new Date(dateM[1].trim()).toISOString().slice(0, 10); } catch {}
-
-      // Description/snippet
-      const descM = raw.match(/<description[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/);
-      const snippet = descM ? descM[1].replace(/<[^>]+>/g, "").replace(/&amp;/g,"&").slice(0, 300).trim() : "";
+      try { if (pubDate) date = new Date(pubDate).toISOString().slice(0, 10); } catch {}
 
       if (!title || !link) continue;
-      if (title.toLowerCase().includes("google news")) continue; // skip meta items
-      if (!passesNotFilter({ title, description: snippet }, notPhrases)) continue;
+      if (title.toLowerCase().includes("google news")) continue;
+      if (!passesNotFilter({ title, description: rawDesc }, notPhrases)) continue;
 
-      items.push({ title, url: link, source, snippet, date, via: "google-news" });
+      items.push({ title, url: link, source, snippet: rawDesc, date, via: "google-news" });
     }
-    console.log(`[Google News RSS] "${query}" → ${items.length} articles from ${[...new Set(items.map(i=>i.source))].slice(0,8).join(", ")}`);
+    console.log("[Google News RSS]", JSON.stringify(query), "->", items.length, "articles");
     return items;
   } catch (e) {
     console.warn("[Google News RSS] Failed:", e.message);
