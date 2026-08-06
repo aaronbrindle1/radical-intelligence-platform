@@ -2250,6 +2250,59 @@ function BriefingCharts({ company, persona = "exec" }) {
           </div>
         );
       })()}
+
+      {/* Row 5: Top Press Snippets */}
+      {media.length > 0 && (
+        <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"14px 16px" }}>
+          <div style={{ fontSize:10, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:12 }}>
+            Top Press Coverage — {media.length} articles
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {media.slice(0, 10).map((a, i) => (
+              <a key={i} href={a.url} target="_blank" rel="noopener noreferrer"
+                style={{ display:"block", textDecoration:"none", padding:"10px 12px", borderRadius:8, background:T.ghost, border:`1px solid ${T.border}` }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                  <span style={{ fontSize:10, fontWeight:700, color:T.accent, background:`${T.accent}18`, padding:"2px 7px", borderRadius:4 }}>{a.source || "Unknown"}</span>
+                  {a.tier === 1 && <span style={{ fontSize:9, color:"#818cf8", background:"#818cf820", padding:"1px 5px", borderRadius:3 }}>Tier 1</span>}
+                  <span style={{ fontSize:10, color:T.faint, marginLeft:"auto" }}>{a.date ? a.date.slice(0,10) : ""}</span>
+                </div>
+                <div style={{ fontSize:12, fontWeight:600, color:T.text, lineHeight:1.4, marginBottom:4 }}>{a.title || "(No title)"}</div>
+                {a.snippet && <div style={{ fontSize:11, color:T.dim, lineHeight:1.5, fontStyle:"italic" }}>"{a.snippet.slice(0,240)}{a.snippet.length > 240 ? "…" : ""}"</div>}
+              </a>
+            ))}
+            {media.length > 10 && <div style={{ fontSize:11, color:T.faint, textAlign:"center", paddingTop:4 }}>+ {media.length - 10} more in Coverage tab</div>}
+          </div>
+        </div>
+      )}
+
+      {/* Row 6: Top Social Posts */}
+      {social.length > 0 && (
+        <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"14px 16px" }}>
+          <div style={{ fontSize:10, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:12 }}>
+            Top Social Posts — {social.length} posts
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {social.slice(0, 8).map((s, i) => {
+              const meta = PLAT[s.platform] || { color:T.dim, icon:"◈" };
+              return (
+                <div key={i} style={{ padding:"10px 12px", borderRadius:8, background:T.ghost, border:`1px solid ${T.border}` }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+                    <span style={{ fontSize:11, fontWeight:700, color:meta.color }}>{meta.icon} {s.platform}</span>
+                    {s.subreddit && <span style={{ fontSize:10, color:T.faint }}>r/{s.subreddit}</span>}
+                    {s.author && <span style={{ fontSize:10, color:T.faint }}>@{s.author}</span>}
+                    <span style={{ fontSize:10, color:T.faint, marginLeft:"auto" }}>{s.date ? s.date.slice(0,10) : ""}</span>
+                    {s.likes > 0 && <span style={{ fontSize:10, color:T.faint }}>&#9829; {s.likes}</span>}
+                  </div>
+                  <div style={{ fontSize:12, color:T.text, lineHeight:1.5, fontStyle:"italic" }}>
+                    "{(s.text||"").slice(0,280)}{(s.text||"").length > 280 ? "…" : ""}"
+                  </div>
+                </div>
+              );
+            })}
+            {social.length > 8 && <div style={{ fontSize:11, color:T.faint, textAlign:"center", paddingTop:4 }}>+ {social.length - 8} more in Social tab</div>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

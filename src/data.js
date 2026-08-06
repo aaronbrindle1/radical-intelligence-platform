@@ -75,6 +75,7 @@ export const BOOLEAN_QUERIES = {
   "Etched":              `"Etched" AND ("AI" OR "ASIC" OR "transformer" OR "silicon" OR "chip" OR "etched.com")`,
   "Prime Intellect":     `("Prime Intellect" OR "primeintellect.ai" OR "INTELLECT-1" OR "INTELLECT-2" OR "INTELLECT-3") AND ("AI" OR "compute" OR "training" OR "reinforcement learning" OR "post-training" OR "distributed" OR "agentic" OR "GPU")`,
   "Radical Ventures":    `("Radical Ventures" OR "radical.vc") AND ("AI" OR "venture" OR "fund" OR "investment" OR "portfolio" OR "startup" OR "founder") NOT "radical change" NOT "radical left" NOT "radical right" NOT "radical idea"`,
+  "Discovery Loop":      `"Discovery Loop" OR "discoveryloop.com" OR ("Discovery Loop" AND ("AI" OR "startup" OR "education" OR "learning"))`,
 };
 
 const RAW_PORTFOLIO = [
