@@ -1029,8 +1029,8 @@ function OverviewTab({ company, run }) {
   const [tierFilter, setTierFilter] = useState("All");
   const [platFilter, setPlatFilter] = useState("all");
   const [selectedDate, setSelectedDate] = useState(null);
-  const [mediaLimit, setMediaLimit] = useState(50);
-  const [socialLimit, setSocialLimit] = useState(50);
+  const [mediaLimit, setMediaLimit] = useState(100);
+  const [socialLimit, setSocialLimit] = useState(100);
 
   if (!run) return (
     <div style={{ textAlign:"center", padding:"60px 0", color:T.faint }}>
@@ -1085,7 +1085,7 @@ function OverviewTab({ company, run }) {
       {/* News */}
       <div>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10, gap:10, flexWrap:"wrap" }}>
-          <div style={{ fontSize:14, fontWeight:700, color:T.text }}>News <span style={{ color:T.dim, fontWeight:400, fontSize:12 }}>({run.mediaCount || 0} articles)</span></div>
+          <div style={{ fontSize:14, fontWeight:700, color:T.text }}>News <span style={{ color:T.dim, fontWeight:400, fontSize:12 }}>({(run.mediaCount || 0) >= 500 ? "500+" : (run.mediaCount || 0)} articles{(run.mediaCount || 0) >= 500 ? " — cap reached" : ""})</span></div>
           <div style={{ display:"flex", gap:6 }}>
             {["All","T1","T2","T3"].map(t => (
               <button key={t} onClick={() => setTierFilter(t)} style={{ padding:"3px 9px", borderRadius:20, fontSize:11, fontWeight:600, cursor:"pointer", border:`1px solid ${tierFilter===t ? T.accent+"80" : T.border}`, background:tierFilter===t ? T.accentDim : "transparent", color:tierFilter===t ? T.accent : T.dim }}>
@@ -1122,7 +1122,7 @@ function OverviewTab({ company, run }) {
       {(run.socialResults || []).length > 0 && (
         <div>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10, gap:10, flexWrap:"wrap" }}>
-            <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Social <span style={{ color:T.dim, fontWeight:400, fontSize:12 }}>({run.socialCount || 0} posts)</span></div>
+            <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Social <span style={{ color:T.dim, fontWeight:400, fontSize:12 }}>({(run.socialCount || 0) >= 500 ? "500+" : (run.socialCount || 0)} posts{(run.socialCount || 0) >= 500 ? " — cap reached" : ""})</span></div>
             <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
               {["all","twitter","reddit","linkedin","hackernews","web"].map(p => {
                 const count = p === "all" ? run.socialResults.length : run.socialResults.filter(s => s.platform === p).length;

@@ -372,7 +372,7 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     .filter(a => !BLOCKED_DOMAINS.some(d => (a.url || "").toLowerCase().includes(d)))
     .filter(a => passesNotFilter(a, notPhrases))
     .filter(a => getTier(a.source?.name, a.url) !== 99)
-    .slice(0, 100)
+    .slice(0, 500)
     .map((a, i) => {
       const src = a.source?.name || a.source || "Unknown";
       const rawTitle = a.title || "";
@@ -915,8 +915,8 @@ export async function runCompany(company, settings, onProgress) {
     ranAt: new Date().toISOString(),
     dateRangeId: dateRange,
     fromDate, query,
-    mediaResults: mediaResults.slice(0, 100).map(m => ({ ...m, snippet: (m.snippet || "").slice(0, 300) })),
-    socialResults: socialResults.slice(0, 100).map(s => ({ ...s, text: (s.text || "").slice(0, 400) })),
+    mediaResults: mediaResults.slice(0, 500).map(m => ({ ...m, snippet: (m.snippet || "").slice(0, 300) })),
+    socialResults: socialResults.slice(0, 500).map(s => ({ ...s, text: (s.text || "").slice(0, 400) })),
     mediaCount: mediaResults.length,
     socialCount: socialResults.length,
     sentimentScore,
@@ -1128,7 +1128,7 @@ export async function generateBriefing(company, persona, apiKeys) {
       .map(m => `  • [${m.date?.slice(0,10) || ""}] ${m.source} (T${m.tier}): ${m.title}${m.snippet ? " — " + m.snippet.slice(0, 100) : ""}`).join("\n");
 
     // Notable Tier 1 coverage
-    const t1Coverage = t1.slice(0, 8).map(m => `  • ${m.source}: ${m.title}`).join("\n");
+    const t1Coverage = t1.slice(0, 15).map(m => `  • ${m.source}: ${m.title}`).join("\n") + (t1.length > 15 ? `\n  ... and ${t1.length - 15} more T1 articles` : "");
 
     // Social breakdown by platform
     const byPlatform = {};
@@ -1176,11 +1176,12 @@ ${dateRange}
 DATA:
 
 COVERAGE METRICS:
-- Total articles: ${run.mediaCount || mediaResults.length}
-- Social posts: ${run.socialCount || socialResults.length}
+- Total articles: ${mediaResults.length >= 500 ? "500+ (volume cap reached — actual coverage may be higher)" : (run.mediaCount || mediaResults.length)}
+- Social posts: ${socialResults.length >= 500 ? "500+ (volume cap reached — actual engagement may be higher)" : (run.socialCount || socialResults.length)}
 - Overall sentiment score: ${sentiment} (${sentLabel})
 - Tier 1 outlets: ${t1.length} articles | Tier 2: ${t2.length} | Tier 3: ${t3.length}
 - Sentiment breakdown: ${posArticles.length} positive, ${neutArticles.length} neutral, ${negArticles.length} negative articles
+${mediaResults.length >= 500 ? "- NOTE: Article count hit the 500-article cap. Total real-world coverage volume is higher than reported." : ""}${socialResults.length >= 500 ? "- NOTE: Social post count hit the 500-post cap. Total real-world social engagement is higher than reported." : ""}
 
 COVERAGE THEMES (auto-detected, articles grouped by topic):
 ${formatThemes(themes, 4)}
