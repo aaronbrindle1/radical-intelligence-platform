@@ -415,9 +415,8 @@ async function fetchGoogleNewsRSS(query, notPhrases = []) {
       let date = "";
       try { if (dateM) date = new Date(dateM[1].trim()).toISOString().slice(0, 10); } catch {}
 
-      // Snippet from description — strip HTML tags
-      const descM = raw.match(/<description>([^<]*(?:<(?!\/description>)[^<]*)*)<\/description>/);
-      const snippet = descM ? descM[1].replace(/<[^>]+>/g,"").replace(/&amp;/g,"&").replace(/&nbsp;/g," ").replace(/&lt;/g,"<").replace(/&gt;/g,">").slice(0,300).trim() : "";
+      // Google News descriptions are just HTML links — use empty snippet (title is sufficient)
+      const snippet = "";
 
       if (!title || !link) continue;
       if (!passesNotFilter({ title, description: snippet }, notPhrases)) continue;
@@ -428,7 +427,7 @@ async function fetchGoogleNewsRSS(query, notPhrases = []) {
       items.push({ title, url: link, source: finalSource, snippet, date, via: "google-news" });
     }
 
-    console.log("[Google News RSS]", JSON.stringify(query), "->", items.length, "articles from:", [...new Set(items.map(i=>i.source))].slice(0,10).join(", "));
+    const sources = [...new Set(items.map(i=>i.source))]; console.log("[Google News RSS]", JSON.stringify(query), "->", items.length, "articles. Sources:", sources.join(", "));
     return items;
   } catch (e) {
     console.warn("[Google News RSS] Failed:", e.message);
