@@ -222,40 +222,102 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     tierByName[k.replace(/^the\s+/, "")] = o.tier || 2;
     if (o.domain) tierByDomain[o.domain.replace(/^www\./, "")] = o.tier || 2;
   });
-  // Explicit aliases for outlets NewsAPI returns with non-standard names
+  // Comprehensive alias map covering all known NewsAPI source name variants
   const TIER_ALIASES = {
+    // Tier 1 — Major news
     "nyt": 1, "new york times": 1, "the new york times": 1, "nytimes": 1,
     "wsj": 1, "wall street journal": 1, "the wall street journal": 1,
     "washington post": 1, "the washington post": 1, "wapo": 1,
-    "financial times": 1, "ft": 1,
-    "bloomberg": 1, "bloomberg news": 1, "bloomberg businessweek": 1,
-    "reuters": 1, "associated press": 1, "ap": 1, "ap news": 1,
-    "bbc": 1, "bbc news": 1,
-    "wired": 1, "techcrunch": 1, "the verge": 1, "verge": 1,
-    "fortune": 1, "forbes": 1, "cnbc": 1,
-    "times of india": 2, "next big future": 3, "daemonology": 3, "forkast": 3,
-    "breitbart": null, "newsmax": null, "oann": null,  // null = block
+    "financial times": 1, "ft": 1, "ft.com": 1,
+    "bloomberg": 1, "bloomberg news": 1, "bloomberg businessweek": 1, "bloomberg technology": 1,
+    "reuters": 1, "reuters.com": 1, "associated press": 1, "ap": 1, "ap news": 1, "apnews": 1,
+    "bbc": 1, "bbc news": 1, "bbc.com": 1, "bbc.co.uk": 1,
+    "guardian": 1, "the guardian": 1,
+    "cnbc": 1, "cnbc.com": 1,
+    "forbes": 1, "forbes.com": 1,
+    "fortune": 1, "fortune.com": 1,
+    "the atlantic": 1, "atlantic": 1,
+    "business insider": 1, "businessinsider": 1, "insider": 1,
+    "yahoo finance": 1, "yahoo! finance": 1,
+    "marketwatch": 1,
+    "barron's": 1, "barrons": 1,
+    "usa today": 1, "usatoday": 1,
+    "los angeles times": 1, "la times": 1, "latimes": 1,
+    "time": 1, "time magazine": 1, "time.com": 1,
+    "newsweek": 1, "newsweek.com": 1,
+    "the economist": 1, "economist": 1,
+    "politico": 1, "politico.com": 1,
+    "axios": 1, "axios.com": 1,
+    "mit technology review": 1, "technology review": 1, "technologyreview": 1,
+    "quanta magazine": 1, "quantamagazine": 1,
+    "scientific american": 1,
+    "nature": 1, "nature.com": 1,
+    "south china morning post": 1, "scmp": 1,
+    "globe and mail": 1, "the globe and mail": 1,
+    "nikkei asia": 1, "nikkei": 1,
+    "harvard business review": 1, "hbr": 1,
+    "seeking alpha": 1,
+    "msn": 1, "msn.com": 1,
+    // Tier 1 — Core tech (primary outlets)
+    "techcrunch": 1, "techcrunch.com": 1,
+    "wired": 1, "wired.com": 1,
+    "the verge": 1, "verge": 1, "theverge.com": 1,
+    // Tier 2 — secondary tech
+    "venturebeat": 2, "ars technica": 2, "arstechnica": 2,
+    "cnet": 2, "zdnet": 2, "geekwire": 2, "fast company": 2, "fastcompany": 2,
+    "engadget": 2, "the information": 2, "the register": 2, "register": 2,
+    "siliconangle": 2, "silicon angle": 2, "techrepublic": 2,
+    "computerworld": 2, "infoq": 2, "digiday": 2, "gizmodo": 2, "mashable": 2,
+    "rest of world": 2, "restofworld": 2, "morning brew": 2,
+    "pitchbook": 2, "crunchbase": 2, "crunchbase news": 2, "cb insights": 2,
+    "betakit": 2, "financial post": 2, "cbc": 2, "cbc news": 2,
+    "the decoder": 2, "stratechery": 2, "semianalysis": 2, "venturebeat": 2,
+    "ai business": 2, "unite.ai": 2,
+    "times of india": 2, "the times of india": 2,
+    // Tier 3 — lower quality but not blocked
+    "next big future": 3, "daemonology": 3, "forkast": 3, "forkast.news": 3,
+    // Blocked — null means filter out entirely
+    "breitbart": null, "breitbart news": null, "breitbart.com": null,
+    "newsmax": null, "oann": null, "one america news": null,
+    "the gateway pundit": null, "daily wire": null, "natural news": null,
+    "infowars": null, "rumble": null,
+    "pr newswire": null, "prnewswire": null, "business wire": null,
+    "businesswire": null, "globe newswire": null, "globenewswire": null,
+    "accesswire": null, "einpresswire": null, "send2press": null,
   };
+
   const getTier = (name, url) => {
     const k = (name || "").toLowerCase().trim();
-    // Check explicit aliases first
+    // 1. Check explicit alias map
     if (k in TIER_ALIASES) {
       const t = TIER_ALIASES[k];
-      return t === null ? 99 : t;  // 99 = blocked
+      return t === null ? 99 : t;
     }
-    const byName = tierByName[k] || tierByName[k.replace(/^the\s+/, "")];
+    // 2. Check name without "the " prefix
+    const kNoThe = k.replace(/^the\s+/, "");
+    if (kNoThe in TIER_ALIASES) {
+      const t = TIER_ALIASES[kNoThe];
+      return t === null ? 99 : t;
+    }
+    // 3. Check tier maps built from DEFAULT_OUTLETS
+    const byName = tierByName[k] || tierByName[kNoThe];
     if (byName) return byName;
-    // Fallback: match by URL domain
+    // 4. Domain-based fallback from URL
     if (url) {
       try {
         const host = new URL(url).hostname.replace(/^www\./, "");
+        if (host in TIER_ALIASES) {
+          const t = TIER_ALIASES[host];
+          return t === null ? 99 : t;
+        }
         const byDomain = tierByDomain[host];
         if (byDomain) return byDomain;
+        // Partial match for subdomains
         const partial = Object.keys(tierByDomain).find(d => host.endsWith(d));
         if (partial) return tierByDomain[partial];
       } catch {}
     }
-    return 2;
+    return 2; // Default to tier 2 for unknown outlets
   };
 
   return articles
