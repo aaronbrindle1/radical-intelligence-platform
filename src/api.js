@@ -404,7 +404,7 @@ async function fetchGoogleNewsRSS(query, notPhrases = []) {
       const sourceName = srcM ? srcM[2].trim() : "";
 
       // Strip " - Source Name" from title end
-      const title = sourceName ? fullTitle.replace(new RegExp("\s*-\s*" + sourceName.replace(/[.*+?^${}()|[\]\]/g,"\$&") + "\s*$"), "").trim() : fullTitle;
+      const title = fullTitle.replace(/ - [^-]+$/, "").trim() || fullTitle;
 
       // Google News link (redirect URL) — use as the clickable URL
       const linkM = raw.match(/<link>([^<]+)<\/link>/);
