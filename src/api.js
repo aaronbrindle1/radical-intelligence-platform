@@ -340,8 +340,20 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     return 2; // Default to tier 2 for unknown outlets
   };
 
-  // ── Google News RSS — supplements NewsAPI with NYT, WSJ, FT etc ─────────────
-  const gnArticles = await fetchGoogleNewsRSS(simpleQuery, notPhrases);
+  // ── Google News RSS — fetch multiple queries for full coverage ───────────────
+  // Google News RSS only returns ~10 results per query, so we run 3 parallel
+  // queries with different sort/time parameters to maximize coverage
+  const [gn1, gn2, gn3] = await Promise.all([
+    fetchGoogleNewsRSS(simpleQuery, notPhrases),
+    fetchGoogleNewsRSS(simpleQuery + " when:7d", notPhrases),
+    fetchGoogleNewsRSS(simpleQuery + " after:2026-07-01", notPhrases),
+  ]);
+  const gnSeen = new Set();
+  const gnArticles = [...gn1, ...gn2, ...gn3].filter(a => {
+    if (!a.url || gnSeen.has(a.url)) return false;
+    gnSeen.add(a.url); return true;
+  });
+  console.log("[Google News RSS] total deduped:", gnArticles.length, "from", gnArticles.length ? [...new Set(gnArticles.map(a=>a.source))].join(", ") : "none");
 
   // Merge NewsAPI + Google News, deduplicate by URL
   const allArticles = [...articles, ...gnArticles];
