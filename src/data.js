@@ -21,11 +21,20 @@ export const BLOCKED_DOMAINS = [
   "cnblogs.com","habr.com","csdn.net","segmentfault.com","juejin.cn",
   "wwwhatsnew.com","xataka.com",
   "youtube.com","youtu.be","vimeo.com","dailymotion.com",
-  // Low-quality / partisan / aggregator outlets — not appropriate for VC intelligence
+  // Low-quality / partisan / aggregator outlets
   "breitbart.com","infowars.com","naturalnews.com","thegatewaypundit.com",
   "dailywire.com","newsmax.com","oann.com","rumble.com",
   "daemonology.net","forkast.news","nextbigfuture.com",
   "prnewswire.com","businesswire.com","globenewswire.com","accesswire.com",
+  // Irrelevant domains that pollute results
+  "pypi.org","wiley.com","trailcooking.com","livedoor.com","amazon.com",
+  "protothema.gr","wolfram.com","unity.com","manrepeller.com",
+  "literatumonline.com","semrush.com","nakedcapitalism.com","alltoc.com",
+  "lastwatchdog.com","thepinknews.com","cryptoslate.com","cryptobriefing.com",
+  "bleeding-cool.com","bleedingcool.com","kotaku.com","eurogamer.net",
+  "uploadVR.com","uploadvr.com","4sysops.com","mindtheproduct.com",
+  "slashdot.org","wccftech.com","itzr.com","nvidia.com","microsoft.com",
+  "sciencedaily.com","phys.org","thepointsguy.com","aZcentral.com",
 ];
 
 export const BOOLEAN_QUERIES = {
@@ -80,7 +89,7 @@ export const BOOLEAN_QUERIES = {
   "Etched":              `"Etched" AND ("AI" OR "ASIC" OR "transformer" OR "silicon" OR "chip" OR "etched.com")`,
   "Prime Intellect":     `("Prime Intellect" OR "primeintellect.ai" OR "INTELLECT-1" OR "INTELLECT-2" OR "INTELLECT-3") AND ("AI" OR "compute" OR "training" OR "reinforcement learning" OR "post-training" OR "distributed" OR "agentic" OR "GPU")`,
   "Radical Ventures":    `("Radical Ventures" OR "radical.vc") AND ("AI" OR "venture" OR "fund" OR "investment" OR "portfolio" OR "startup" OR "founder") NOT "radical change" NOT "radical left" NOT "radical right" NOT "radical idea"`,
-  "Discovery Loop":      `"Discovery Loop" OR "discoveryloop.com" OR ("Discovery Loop" AND ("AI" OR "startup" OR "education" OR "learning"))`,
+  "Discovery Loop":      `"Discovery Loop" AND ("AI" OR "Jeff Dean" OR "startup" OR "Google" OR "Sanjay Ghemawat" OR "discoveryloop.com")`,
 };
 
 const RAW_PORTFOLIO = [
