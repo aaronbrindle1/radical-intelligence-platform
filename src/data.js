@@ -232,7 +232,7 @@ export const DEFAULT_OUTLETS = [
   {id:109, name:"Fast Company",                    tier:2, cat:"Tech",        domain:"fastcompany.com"},
   {id:110, name:"Sifted",                          tier:2, cat:"Tech",        domain:"sifted.eu"},
   {id:111, name:"Engadget",                        tier:2, cat:"Tech",        domain:"engadget.com"},
-  {id:112, name:"The Information",                 tier:2, cat:"Tech",        domain:"theinformation.com"},
+  {id:112, name:"The Information",                 tier:1, cat:"Tech",        domain:"theinformation.com"},
   {id:113, name:"The Register",                    tier:2, cat:"Tech",        domain:"theregister.com"},
   {id:114, name:"SiliconANGLE",                    tier:2, cat:"Tech",        domain:"siliconangle.com"},
   {id:115, name:"TechRepublic",                    tier:2, cat:"Tech",        domain:"techrepublic.com"},

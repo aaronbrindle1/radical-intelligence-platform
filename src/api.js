@@ -228,8 +228,9 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     "nyt": 1, "new york times": 1, "the new york times": 1, "nytimes": 1,
     "wsj": 1, "wall street journal": 1, "the wall street journal": 1,
     "washington post": 1, "the washington post": 1, "wapo": 1,
-    "financial times": 1, "ft": 1, "ft.com": 1,
-    "bloomberg": 1, "bloomberg news": 1, "bloomberg businessweek": 1, "bloomberg technology": 1,
+    "financial times": 1, "ft": 1, "ft.com": 1, "financial times (ft)": 1,
+    "bloomberg": 1, "bloomberg news": 1, "bloomberg businessweek": 1, "bloomberg technology": 1, "bloomberg law": 1,
+    "the information": 1, "theinformation": 1, "theinformation.com": 1,
     "reuters": 1, "reuters.com": 1, "associated press": 1, "ap": 1, "ap news": 1, "apnews": 1,
     "bbc": 1, "bbc news": 1, "bbc.com": 1, "bbc.co.uk": 1,
     "guardian": 1, "the guardian": 1,
@@ -343,13 +344,15 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
   // ── Google News RSS — fetch multiple queries for full coverage ───────────────
   // Google News RSS only returns ~10 results per query, so we run 3 parallel
   // queries with different sort/time parameters to maximize coverage
-  const [gn1, gn2, gn3] = await Promise.all([
+  const [gn1, gn2, gn3, gn4] = await Promise.all([
     fetchGoogleNewsRSS(simpleQuery, notPhrases),
     fetchGoogleNewsRSS(simpleQuery + " when:7d", notPhrases),
     fetchGoogleNewsRSS(simpleQuery + " after:2026-07-01", notPhrases),
+    fetchGoogleNewsRSS(simpleQuery + " site:ft.com OR site:nytimes.com OR site:wsj.com OR site:bloomberg.com OR site:theinformation.com", notPhrases),
   ]);
   const gnSeen = new Set();
-  const gnArticles = [...gn1, ...gn2, ...gn3].filter(a => {
+  const gnArticles = [...gn1, ...gn2, ...gn3, ...gn4].filter(a => {
+
     if (!a.url || gnSeen.has(a.url)) return false;
     gnSeen.add(a.url); return true;
   });
@@ -472,6 +475,12 @@ function extractDomainName(url) {
       "businessinsider.com": "Business Insider",
       "technologyreview.com": "MIT Technology Review",
       "theatlantic.com": "The Atlantic",
+      "ft.com": "Financial Times",
+      "theinformation.com": "The Information",
+      "bloomberg.com": "Bloomberg",
+      "economist.com": "The Economist",
+      "wsj.com": "The Wall Street Journal",
+      "nytimes.com": "The New York Times",
     };
     return DOMAIN_NAMES[host] || host;
   } catch { return "Unknown"; }
