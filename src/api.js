@@ -228,11 +228,11 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
   // Comprehensive alias map covering all known NewsAPI source name variants
   const TIER_ALIASES = {
     // Tier 1 — Major news
-    "nyt": 1, "new york times": 1, "the new york times": 1, "nytimes": 1,
-    "wsj": 1, "wall street journal": 1, "the wall street journal": 1,
+    "nyt": 1, "new york times": 1, "the new york times": 1, "nytimes": 1, "nytimes.com": 1,
+    "wsj": 1, "wall street journal": 1, "the wall street journal": 1, "wsj.com": 1,
     "washington post": 1, "the washington post": 1, "wapo": 1,
     "financial times": 1, "ft": 1, "ft.com": 1, "financial times (ft)": 1,
-    "bloomberg": 1, "bloomberg news": 1, "bloomberg businessweek": 1, "bloomberg technology": 1, "bloomberg law": 1,
+    "bloomberg": 1, "bloomberg news": 1, "bloomberg businessweek": 1, "bloomberg technology": 1, "bloomberg law": 1, "bloomberg.com": 1,
     "the information": 1, "theinformation": 1, "theinformation.com": 1,
     "tbpn": 1, "tbpn.com": 1,
     "reuters": 1, "reuters.com": 1, "associated press": 1, "ap": 1, "ap news": 1, "apnews": 1,
@@ -451,8 +451,11 @@ async function fetchGoogleNewsRSS(query, notPhrases = []) {
       if (!title || !link) continue;
       if (!passesNotFilter({ title, description: snippet }, notPhrases)) continue;
 
-      // Use source URL domain to get proper name if srcM missing
-      const finalSource = sourceName || extractDomainName(sourceUrl || link);
+      // If source name looks like a domain (e.g. "nytimes.com"), convert to proper name
+      const looksLikeDomain = sourceName && sourceName.includes(".");
+      const finalSource = looksLikeDomain
+        ? extractDomainName("https://" + sourceName) || sourceName
+        : sourceName || extractDomainName(sourceUrl || link);
 
       items.push({ title, url: link, source: finalSource, snippet, date, via: "google-news" });
     }
@@ -471,6 +474,7 @@ function extractDomainName(url) {
     // Convert nytimes.com → "The New York Times" etc using a small lookup
     const DOMAIN_NAMES = {
       "nytimes.com": "The New York Times",
+      "nytimes": "The New York Times",
       "wsj.com": "The Wall Street Journal",
       "ft.com": "Financial Times",
       "bloomberg.com": "Bloomberg",
