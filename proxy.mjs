@@ -502,6 +502,31 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Google News debug — GET /gnews-debug?q=QUERY ───────────────────────────
+  if (url.startsWith("/gnews-debug")) {
+    const qs = new URL("http://localhost" + url).searchParams;
+    const q = qs.get("q") || "Discovery Loop";
+    const gnUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`;
+    https.get(gnUrl, { headers: { "User-Agent": "Mozilla/5.0" } }, gnRes => {
+      const chunks = []; gnRes.on("data", c => chunks.push(c));
+      gnRes.on("end", () => {
+        const xml = Buffer.concat(chunks).toString("utf8");
+        const items = []; const parts = xml.split("<item>").slice(1);
+        for (const raw of parts) {
+          const titleM = raw.match(/<title[^>]*>([^<]+)<\/title>/);
+          const srcM = raw.match(/<source[^>]*url="([^"]*)"[^>]*>([^<]+)<\/source>/);
+          const dateM = raw.match(/<pubDate[^>]*>([^<]+)<\/pubDate>/);
+          const linkM = raw.match(/<link>([^<]+)<\/link>/);
+          let date = ""; try { if (dateM) date = new Date(dateM[1]).toISOString().slice(0,10); } catch {}
+          items.push({ title: titleM?.[1] || "", source: srcM?.[2] || "", sourceUrl: srcM?.[1] || "", date, link: linkM?.[1]?.slice(0,80) || "" });
+        }
+        res.writeHead(200, { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" });
+        res.end(JSON.stringify({ query: q, count: items.length, items }, null, 2));
+      });
+    }).on("error", e => { res.writeHead(500); res.end(JSON.stringify({ error: e.message })); });
+    return;
+  }
+
   // ── Vertex diagnostics — GET /vertex-test ────────────────────────────────
   if (url === "/vertex-test") {
     const token = await getVertexToken();
