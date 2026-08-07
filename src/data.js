@@ -17,7 +17,7 @@ export const BLOCKED_DOMAINS = [
   "medium.com","substack.com","ghost.io","wordpress.com","blogspot.com",
   "tumblr.com","weebly.com","wix.com",
   "pypi.org","npmjs.com","github.com","gitlab.com","bitbucket.org",
-  "amazon.com","aws.amazon.com","azure.microsoft.com","cloud.google.com",
+  "amazon.com","aws.amazon.com","azure.microsoft.com",
   "cnblogs.com","habr.com","csdn.net","segmentfault.com","juejin.cn",
   "wwwhatsnew.com","xataka.com",
   "youtube.com","youtu.be","vimeo.com","dailymotion.com",

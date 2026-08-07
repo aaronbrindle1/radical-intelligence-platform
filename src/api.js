@@ -382,7 +382,7 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
   };
 
   const finalResults = merged
-    .filter(a => !BLOCKED_DOMAINS.some(d => (a.url || "").toLowerCase().includes(d)))
+    .filter(a => !BLOCKED_DOMAINS.some(d => { try { return new URL(a.url || "").hostname.replace(/^www\./, "").includes(d.replace(/^www\./, "")); } catch { return (a.url||"").toLowerCase().includes(d); } }))
     .filter(a => passesNotFilter(a, notPhrases))
     .filter(a => getTier(a.source?.name || a.source, a.url) !== 99)
     .filter(a => isRelevant(a));
