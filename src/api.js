@@ -352,7 +352,7 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     fetchGoogleNewsRSS(simpleQuery, notPhrases),
     fetchGoogleNewsRSS(simpleQuery + " when:7d", notPhrases),
     fetchGoogleNewsRSS(simpleQuery + " after:2026-07-01", notPhrases),
-    fetchGoogleNewsRSS(simpleQuery + " site:ft.com OR site:nytimes.com OR site:wsj.com OR site:bloomberg.com OR site:theinformation.com", notPhrases),
+    fetchGoogleNewsRSS(simpleQuery + " source:Financial Times OR source:New York Times OR source:Wall Street Journal OR source:Bloomberg", notPhrases),
   ]);
   const gnSeen = new Set();
   const gnArticles = [...gn1, ...gn2, ...gn3, ...gn4].filter(a => {
@@ -371,10 +371,27 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     return true;
   });
 
+  // Build relevance keywords from the company name and query
+  const companyWords = company.name.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+  const queryWords = simpleQuery.toLowerCase().replace(/['"]/g, "").split(/\s+/).filter(w => w.length > 3);
+  const relevanceWords = [...new Set([...companyWords, ...queryWords])];
+
+  const isRelevant = (a) => {
+    // NewsAPI articles are pre-filtered by query — always relevant
+    if (a.via !== "google-news") return true;
+    // Google News RSS: check title and date for relevance
+    const title = (a.title || "").toLowerCase();
+    const hasRelevantWord = relevanceWords.some(w => title.includes(w));
+    // Also enforce date filter for Google News articles
+    if (fromDate && a.date && a.date < fromDate) return false;
+    return hasRelevantWord;
+  };
+
   return merged
     .filter(a => !BLOCKED_DOMAINS.some(d => (a.url || "").toLowerCase().includes(d)))
     .filter(a => passesNotFilter(a, notPhrases))
     .filter(a => getTier(a.source?.name, a.url) !== 99)
+    .filter(a => isRelevant(a))
     .slice(0, 500)
     .map((a, i) => {
       const src = a.source?.name || a.source || "Unknown";
