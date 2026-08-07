@@ -162,6 +162,9 @@ function passesNotFilter(article, notPhrases) {
 
 // ── NewsAPI fetch (5 parallel pages for maximum coverage) ────────────────────
 
+// Number formatter (shared with App.jsx)
+const fmt = n => { if (!n && n !== 0) return "—"; const a = Math.abs(n); return a >= 1e9 ? `${(n/1e9).toFixed(1)}B` : a >= 1e6 ? `${(n/1e6).toFixed(1)}M` : a >= 1e3 ? `${(n/1e3).toFixed(0)}K` : String(n); };
+
 export async function fetchNews(company, fromDate, newsKey, outlets = []) {
   if (!newsKey) return [];
 
