@@ -278,7 +278,7 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     "rest of world": 2, "restofworld": 2, "morning brew": 2,
     "pitchbook": 2, "crunchbase": 2, "crunchbase news": 2, "cb insights": 2,
     "betakit": 2, "financial post": 2, "cbc": 2, "cbc news": 2,
-    "the decoder": 2, "stratechery": 2, "semianalysis": 2, "venturebeat": 2,
+    "the decoder": 2, "venturebeat": 2,
     "ai business": 2, "unite.ai": 2,
     "times of india": 2, "the times of india": 2,
     "siliconangle news": 2, "siliconangle": 2,
@@ -1209,9 +1209,9 @@ export async function generateBriefing(company, persona, apiKeys) {
       ? `\nCOMPETITIVE SHARE OF VOICE:\n${sovContext}`
       : "\nCOMPETITIVE DATA: Not available — run Share of Voice tab for competitive context.";
 
-    reportPrompt = `You are a senior communications analyst at Radical Ventures writing a high-level intelligence brief about ${company.name} for the leadership team.
+    reportPrompt = `You are a senior communications analyst at Radical Ventures writing a factual media intelligence brief about ${company.name} for the leadership team.
 
-Your task: synthesise the data below into a clear, narrative-driven brief focused on IMPACT, SENTIMENT and NARRATIVE. Be direct. Be opinionated. Reference specific outlets and headlines as evidence. Do not describe methodology or list raw numbers unless they tell a story.
+Your task: synthesise the data below into a clear, evidence-based brief. Be precise and measured — avoid superlatives and hyperbole. Let the data speak. Reference specific outlets and headlines as evidence. Do not describe methodology or list raw numbers unless they tell a story.
 
 Use this exact structure:
 
@@ -1222,7 +1222,7 @@ ${dateRange}
 ─────────────────────────────────────────
 
 EXECUTIVE SUMMARY (2-3 sentences)
-A sharp top-line read: what is the dominant narrative right now, what is the overall sentiment, and what is the single most important thing leadership should know? Write this as if you are briefing a CEO.
+A concise, factual top-line read: what is the dominant narrative, what is the overall sentiment, and what is the single most important communications insight? Be precise — avoid emotive language.
 
 ─────────────────────────────────────────
 
@@ -1245,8 +1245,8 @@ What are people saying online? Focus on the most influential voices (highest fol
 5. SIGNALS & WATCH ITEMS
 What patterns or signals in this data should leadership monitor closely? Are there emerging risks, missed opportunities, or narratives that need to be actively managed?
 
-6. RECOMMENDED ACTIONS
-Three to five specific, prioritised actions. Be concrete — name the outlet, the narrative, the timing.
+6. COMMUNICATIONS RECOMMENDATIONS
+Three to five specific, prioritised communications actions only — media relations, narrative management, spokesperson positioning, press strategy. Do not provide business, product or operational guidance. Be concrete — name the outlet, the narrative angle, the timing.
 
 ─────────────────────────────────────────
 
