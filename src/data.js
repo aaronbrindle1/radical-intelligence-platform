@@ -27,14 +27,13 @@ export const BLOCKED_DOMAINS = [
   "daemonology.net","forkast.news","nextbigfuture.com",
   "prnewswire.com","businesswire.com","globenewswire.com","accesswire.com",
   // Irrelevant domains that pollute results
-  "pypi.org","wiley.com","trailcooking.com","livedoor.com","amazon.com",
+  "pypi.org","wiley.com","trailcooking.com","livedoor.com",
   "protothema.gr","wolfram.com","unity.com","manrepeller.com",
   "literatumonline.com","semrush.com","nakedcapitalism.com","alltoc.com",
   "lastwatchdog.com","thepinknews.com","cryptoslate.com","cryptobriefing.com",
   "bleeding-cool.com","bleedingcool.com","kotaku.com","eurogamer.net",
-  "uploadVR.com","uploadvr.com","4sysops.com","mindtheproduct.com",
-  "slashdot.org","wccftech.com","itzr.com","nvidia.com","microsoft.com",
-  "sciencedaily.com","phys.org","thepointsguy.com","aZcentral.com",
+  "uploadvr.com","4sysops.com","mindtheproduct.com",
+  "slashdot.org","wccftech.com","itzr.com",
 ];
 
 export const BOOLEAN_QUERIES = {
