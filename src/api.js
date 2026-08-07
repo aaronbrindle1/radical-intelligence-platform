@@ -377,14 +377,9 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
   const relevanceWords = [...new Set([...companyWords, ...queryWords])];
 
   const isRelevant = (a) => {
-    // NewsAPI articles are pre-filtered by query — always relevant
-    if (a.via !== "google-news") return true;
-    // Google News RSS: check title and date for relevance
-    const title = (a.title || "").toLowerCase();
-    const hasRelevantWord = relevanceWords.some(w => title.includes(w));
-    // Also enforce date filter for Google News articles
-    if (fromDate && a.date && a.date < fromDate) return false;
-    return hasRelevantWord;
+    // Only enforce date filter for Google News articles (NewsAPI handles its own date range)
+    if (a.via === "google-news" && fromDate && a.date && a.date < fromDate) return false;
+    return true;
   };
 
   return merged
