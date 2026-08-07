@@ -238,7 +238,9 @@ function SocialCard({ item, highlight }) {
           <span style={{ fontSize:12, fontWeight:800, color:p.color, width:18, textAlign:"center", flexShrink:0 }}>{p.icon}</span>
           <span style={{ fontSize:11, fontWeight:700, color:T.text }}>{item.author}</span>
           {item.isVerified && <span title="Verified account" style={{ fontSize:10, background:"#3b82f620", color:"#60a5fa", borderRadius:4, padding:"0 4px" }}>✓ Verified</span>}
-          {item.followerCount > 1000 && <span style={{ fontSize:10, color:T.faint }}>{fmt(item.followerCount)} followers</span>}
+          {item.followerCount >= 1000000 && <span style={{ fontSize:9, fontWeight:700, background:"#f59e0b20", color:"#f59e0b", borderRadius:4, padding:"1px 5px" }}>🌟 {fmt(item.followerCount)} followers</span>}
+          {item.followerCount >= 100000 && item.followerCount < 1000000 && <span style={{ fontSize:9, fontWeight:700, background:"#8b5cf620", color:"#8b5cf6", borderRadius:4, padding:"1px 5px" }}>⭐ {fmt(item.followerCount)} followers</span>}
+          {item.followerCount >= 1000 && item.followerCount < 100000 && <span style={{ fontSize:10, color:T.faint }}>{fmt(item.followerCount)} followers</span>}
           {item.subreddit && <span style={{ fontSize:10, color:T.faint }}>{item.subreddit}</span>}
           <span style={{ fontSize:10, color:T.faint, marginLeft:"auto" }}>{item.date}</span>
           <Pip score={item.sentiment || 0} />

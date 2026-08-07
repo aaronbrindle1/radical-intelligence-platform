@@ -895,6 +895,15 @@ export async function runCompany(company, settings, onProgress) {
     if (a.tier !== b.tier) return (a.tier || 3) - (b.tier || 3);
     return (b.date || "").localeCompare(a.date || "");
   });
+  // English language detection — filters out CJK, Arabic, Cyrillic etc
+  const isEnglishText = (text) => {
+    if (!text || text.length < 10) return true;
+    const ascii = (text.match(/[\x20-\x7E]/g) || []).length;
+    if (ascii / text.length < 0.6) return false;
+    if (/[\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF]/.test(text)) return false;
+    return true;
+  };
+
   // Engagement value score — weighted by signal strength
   // Retweets > replies > likes > views; verified/high-follower authors get a boost
   const engagementScore = s => {
@@ -903,10 +912,20 @@ export async function runCompany(company, settings, onProgress) {
       (s.retweets || 0) * 3 +   // retweets = strongest endorsement signal
       (s.comments || 0) * 2 +   // replies indicate real discussion
       (s.views    || 0) * 0.005; // views at low weight (high raw numbers)
-    const followerBoost = Math.log10(Math.max(s.followerCount || 1, 10)) * 8;
-    const verifiedBoost = s.isVerified ? 40 : 0;
-    return base + followerBoost + verifiedBoost;
+    // Logarithmic follower boost — 100k followers = +32, 1M = +48, 10M = +64
+    const followers = s.followerCount || 0;
+    const followerBoost = followers > 0 ? Math.log10(Math.max(followers, 10)) * 16 : 0;
+    const verifiedBoost = s.isVerified ? 60 : 0;  // verified accounts get stronger boost
+    // Extra boost for very influential accounts (100k+ followers)
+    const influencerBoost = followers >= 100000 ? 30 : followers >= 10000 ? 15 : 0;
+    return base + followerBoost + verifiedBoost + influencerBoost;
   };
+  // Filter to English-only posts
+  const beforeEnglishFilter = socialResults.length;
+  socialResults = socialResults.filter(s => isEnglishText(s.text));
+  if (beforeEnglishFilter !== socialResults.length)
+    console.log(`[social] English filter: ${beforeEnglishFilter} → ${socialResults.length} posts`);
+
   socialResults.sort((a, b) => engagementScore(b) - engagementScore(a));
   // Stamp the score onto each result for display
   socialResults = socialResults.map(s => ({ ...s, engagementScore: Math.round(engagementScore(s)) }));
@@ -1135,9 +1154,18 @@ export async function generateBriefing(company, persona, apiKeys) {
     socialResults.forEach(s => { byPlatform[s.platform] = (byPlatform[s.platform] || 0) + 1; });
     const socialBreakdown = Object.entries(byPlatform).map(([p, n]) => `${p}: ${n}`).join(", ");
 
-    // Top social posts
-    const topSocialFull = socialResults.slice(0, 8)
-      .map(s => `  • [${s.platform}] ${s.text?.slice(0, 200) || ""}${s.likes ? ` (${s.likes} likes)` : ""}`).join("\n");
+    // Most influential handles (sorted by follower count)
+    const topHandles = [...socialResults]
+      .filter(s => s.followerCount > 1000)
+      .sort((a, b) => (b.followerCount || 0) - (a.followerCount || 0))
+      .slice(0, 10);
+    const influentialHandles = topHandles.length > 0
+      ? topHandles.map(s => `  • @${s.author} (${s.platform}, ${fmt(s.followerCount || 0)} followers${s.isVerified ? ", verified" : ""}): "${s.text?.slice(0, 120) || ""}"`).join("\n")
+      : "  None with significant following";
+
+    // Top social posts by engagement score
+    const topSocialFull = socialResults.slice(0, 10)
+      .map(s => `  • [${s.platform}] @${s.author || "unknown"}${s.followerCount > 10000 ? ` (${fmt(s.followerCount)} followers)` : ""}: ${s.text?.slice(0, 200) || ""}${s.likes ? ` — ♥${fmt(s.likes)}` : ""}${s.retweets ? ` ↺${fmt(s.retweets)}` : ""}`).join("\n");
 
     // Competitive context — now uses enriched sovContext with %, rank, headlines, AI summary
     const compSection = sovContext
@@ -1202,7 +1230,11 @@ ${topNeg || "  None"}
 
 SOCIAL MEDIA BREAKDOWN:
 Platforms: ${socialBreakdown || "None"}
-Top posts:
+
+Most influential handles discussing this company:
+${influentialHandles}
+
+Top posts by engagement:
 ${topSocialFull || "  None"}
 ${compSection}
 
