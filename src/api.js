@@ -364,8 +364,7 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     if (!a.url || gnSeen.has(a.url)) return false;
     gnSeen.add(a.url); return true;
   });
-  const nytInGN = gnArticles.filter(a => (a.source||"").toLowerCase().includes("nyt") || (a.source||"").toLowerCase().includes("new york times") || (a.source||"").toLowerCase().includes("nytimes"));
-  console.log("[Google News RSS] total deduped:", gnArticles.length, "| NYT articles:", nytInGN.length, nytInGN.map(a=>a.title).join(", "));
+  console.log("[Google News RSS] total deduped:", gnArticles.length, "sources:", [...new Set(gnArticles.map(a=>a.source))].slice(0,8).join(", "));
 
   // Merge NewsAPI + Google News, deduplicate by URL
   const allArticles = [...articles, ...gnArticles];
@@ -388,9 +387,7 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     .filter(a => getTier(a.source?.name || a.source, a.url) !== 99)
     .filter(a => isRelevant(a));
 
-  const nytFinal = finalResults.filter(a => (a.source||"").toLowerCase().includes("new york") || (a.source||"").toLowerCase().includes("nytimes"));
-  console.log("[fetchNews] Final results:", finalResults.length, "| NYT in final:", nytFinal.length, nytFinal.map(a=>a.title).join(", "));
-
+  console.log("[fetchNews] Final:", finalResults.length, "articles");
   return finalResults.slice(0, 500)
     .map((a, i) => {
       const src = a.source?.name || a.source || "Unknown";
