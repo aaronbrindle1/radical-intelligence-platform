@@ -348,14 +348,18 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
   // ── Google News RSS — fetch multiple queries for full coverage ───────────────
   // Google News RSS only returns ~10 results per query, so we run 3 parallel
   // queries with different sort/time parameters to maximize coverage
-  const [gn1, gn2, gn3, gn4] = await Promise.all([
-    fetchGoogleNewsRSS(simpleQuery, notPhrases),
-    fetchGoogleNewsRSS(simpleQuery + " when:7d", notPhrases),
-    fetchGoogleNewsRSS(simpleQuery + " after:2026-07-01", notPhrases),
-    fetchGoogleNewsRSS(simpleQuery + " source:Financial Times OR source:New York Times OR source:Wall Street Journal OR source:Bloomberg", notPhrases),
-  ]);
+  // Run multiple RSS queries in parallel to maximise coverage across outlets
+  // Google News RSS returns ~10 results per query, so we use varied queries
+  const tier1Sites = ["nytimes.com", "wsj.com", "ft.com", "bloomberg.com", "theinformation.com"];
+  const gnQueries = [
+    simpleQuery,
+    simpleQuery + " when:7d",
+    simpleQuery + " when:30d",
+    ...tier1Sites.map(site => simpleQuery + " site:" + site),
+  ];
+  const gnResults = await Promise.all(gnQueries.map(q => fetchGoogleNewsRSS(q, notPhrases)));
   const gnSeen = new Set();
-  const gnArticles = [...gn1, ...gn2, ...gn3, ...gn4].filter(a => {
+  const gnArticles = gnResults.flat().filter(a => {
 
     if (!a.url || gnSeen.has(a.url)) return false;
     gnSeen.add(a.url); return true;
