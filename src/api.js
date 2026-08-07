@@ -235,6 +235,7 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     "bloomberg": 1, "bloomberg news": 1, "bloomberg businessweek": 1, "bloomberg technology": 1, "bloomberg law": 1, "bloomberg.com": 1,
     "the information": 1, "theinformation": 1, "theinformation.com": 1,
     "tbpn": 1, "tbpn.com": 1,
+    "semianalysis": 1, "semianalysis.com": 1,
     "reuters": 1, "reuters.com": 1, "associated press": 1, "ap": 1, "ap news": 1, "apnews": 1,
     "bbc": 1, "bbc news": 1, "bbc.com": 1, "bbc.co.uk": 1,
     "guardian": 1, "the guardian": 1,
@@ -350,7 +351,7 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
   // queries with different sort/time parameters to maximize coverage
   // Run multiple RSS queries in parallel to maximise coverage across outlets
   // Google News RSS returns ~10 results per query, so we use varied queries
-  const tier1Sites = ["nytimes.com", "wsj.com", "ft.com", "bloomberg.com", "theinformation.com"];
+  const tier1Sites = ["nytimes.com", "wsj.com", "ft.com", "bloomberg.com", "theinformation.com", "semianalysis.com"];
   const gnQueries = [
     simpleQuery,
     simpleQuery + " when:7d",
@@ -377,7 +378,12 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
 
   // Date relevance filter — only Google News articles (NewsAPI handles its own date range)
   const isRelevant = (a) => {
-    if (a.via === "google-news" && fromDate && a.date && a.date < fromDate) return false;
+    // Only hard-filter Google News articles with clearly old dates (>90 days ago)
+    // Don't filter on fromDate since RSS date parsing can be unreliable
+    if (a.via === "google-news" && a.date) {
+      const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      if (a.date < ninetyDaysAgo) return false;
+    }
     return true;
   };
 
@@ -498,6 +504,7 @@ function extractDomainName(url) {
       "theatlantic.com": "The Atlantic",
       "ft.com": "Financial Times",
       "theinformation.com": "The Information",
+      "semianalysis.com": "SemiAnalysis",
       "bloomberg.com": "Bloomberg",
       "economist.com": "The Economist",
       "wsj.com": "The Wall Street Journal",
