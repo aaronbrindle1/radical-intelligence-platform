@@ -2417,7 +2417,16 @@ function BriefingTab({ company, settings, onUpdate, toast }) {
 <title>${persona === "report" ? `${company.name} - Radical Brand Intelligence Report` : `${company.name} — ${personaLabel}`}</title>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; max-width: 820px; margin: 40px auto; padding: 0 28px; color: #111; background: #fff; }
-  @media print { body { margin: 20px; } .no-print { display: none; } }
+  @media print {
+    body { margin: 20px; max-width: 100%; }
+    .no-print { display: none; }
+    h2 { page-break-after: avoid; }
+    .chart-card { page-break-inside: avoid; }
+    p, li { orphans: 3; widows: 3; }
+  }
+  /* Ensure no content is clipped */
+  * { box-sizing: border-box; }
+  img, svg { max-width: 100%; height: auto; }
   .section-label { font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 10px; }
   .chart-card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
   .chart-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
@@ -2483,18 +2492,66 @@ ${sovHTML || sovTableHTML ? `
   ${textHTML}
 </div>
 
+<!-- Top press articles -->
+${media.length > 0 ? `
+<div style="margin-bottom:28px">
+  <h2 style="font-size:13px;font-weight:800;color:#111;margin:0 0 14px;text-transform:uppercase;letter-spacing:0.05em">Top Press Coverage (${media.length >= 500 ? "500+" : media.length} articles)</h2>
+  <table style="width:100%;border-collapse:collapse;font-size:11px">
+    <thead><tr style="border-bottom:2px solid #e5e7eb">
+      <th style="text-align:left;padding:6px 8px;color:#6b7280;font-weight:700;text-transform:uppercase;font-size:10px">Outlet</th>
+      <th style="text-align:left;padding:6px 8px;color:#6b7280;font-weight:700;text-transform:uppercase;font-size:10px">Date</th>
+      <th style="text-align:left;padding:6px 8px;color:#6b7280;font-weight:700;text-transform:uppercase;font-size:10px">Headline</th>
+      <th style="text-align:center;padding:6px 8px;color:#6b7280;font-weight:700;text-transform:uppercase;font-size:10px">Tier</th>
+    </tr></thead>
+    <tbody>
+      ${media.slice(0, 50).map(a => `<tr style="border-bottom:1px solid #f3f4f6">
+        <td style="padding:7px 8px;font-weight:600;color:#374151;white-space:nowrap">${a.source || "—"}</td>
+        <td style="padding:7px 8px;color:#9ca3af;white-space:nowrap">${a.date || "—"}</td>
+        <td style="padding:7px 8px;color:#111"><a href="${a.url || "#"}" style="color:#4f46e5;text-decoration:none">${a.title || "(No title)"}</a>${a.snippet ? `<div style="font-size:10px;color:#6b7280;margin-top:2px">${a.snippet.slice(0,150)}${a.snippet.length > 150 ? "…" : ""}</div>` : ""}</td>
+        <td style="padding:7px 8px;text-align:center"><span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;background:${a.tier===1?"#ede9fe":"#f3f4f6"};color:${a.tier===1?"#7c3aed":"#6b7280"}">T${a.tier||3}</span></td>
+      </tr>`).join("")}
+      ${media.length > 50 ? `<tr><td colspan="4" style="padding:10px 8px;color:#9ca3af;font-style:italic;text-align:center">… and ${media.length - 50} more articles</td></tr>` : ""}
+    </tbody>
+  </table>
+</div>` : ""}
+
+<!-- Top social posts -->
+${social.length > 0 ? `
+<div style="margin-bottom:28px">
+  <h2 style="font-size:13px;font-weight:800;color:#111;margin:0 0 14px;text-transform:uppercase;letter-spacing:0.05em">Top Social Posts (${social.length >= 500 ? "500+" : social.length} posts)</h2>
+  <div style="display:flex;flex-direction:column;gap:8px">
+    ${[...social].sort((a,b)=>((b.likes||0)+(b.retweets||0)*3)-((a.likes||0)+(a.retweets||0)*3)).slice(0,20).map(s => `
+    <div style="padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:11px;color:#6b7280">
+        <strong style="color:#374151">${s.platform || "social"}</strong>
+        ${s.author ? `<span>@${s.author}</span>` : ""}
+        ${s.followerCount > 10000 ? `<span style="color:#7c3aed;font-weight:600">${s.followerCount >= 1000000 ? (s.followerCount/1000000).toFixed(1)+"M" : (s.followerCount/1000).toFixed(0)+"K"} followers</span>` : ""}
+        ${s.isVerified ? `<span style="color:#3b82f6">✓ Verified</span>` : ""}
+        <span style="margin-left:auto">${s.date || ""}</span>
+      </div>
+      <p style="margin:0;font-size:12px;color:#111;line-height:1.6">${(s.text||"").slice(0,300)}${(s.text||"").length>300?"…":""}</p>
+      ${(s.likes||s.retweets||s.comments) ? `<div style="margin-top:6px;font-size:10px;color:#9ca3af">${s.likes?`♥ ${s.likes} `:""} ${s.retweets?`↺ ${s.retweets} `:""} ${s.comments?`💬 ${s.comments}`:""}</div>` : ""}
+    </div>`).join("")}
+  </div>
+</div>` : ""}
+
 <div style="margin-top:32px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:10px;color:#9ca3af">
   Generated by Radical Intelligence Platform · Radical Ventures · ${dateStr}
 </div>
 
 </body></html>`;
 
-    const w = window.open("", "_blank");
-    if (!w) { toast("Pop-up blocked — allow pop-ups to use Download", "error"); return; }
-    w.document.write(html);
-    w.document.close();
-    w.focus();
-    setTimeout(() => w.print(), 600);
+    // Download as HTML file — no page cut-off, full report
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${company.name.replace(/[^a-z0-9]/gi, "-")}-Radical-Intelligence-Brief-${new Date().toISOString().slice(0,10)}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast("Report downloaded", "success");
   };
 
   const handleEmail = () => {

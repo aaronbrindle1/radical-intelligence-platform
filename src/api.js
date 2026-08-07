@@ -1172,33 +1172,43 @@ export async function generateBriefing(company, persona, apiKeys) {
       ? `\nCOMPETITIVE SHARE OF VOICE:\n${sovContext}`
       : "\nCOMPETITIVE DATA: Not available — run Share of Voice tab for competitive context.";
 
-    reportPrompt = `You are writing a media and public coverage report FROM Radical Ventures TO the ${company.name} leadership team.
+    reportPrompt = `You are a senior communications analyst at Radical Ventures writing a high-level intelligence brief about ${company.name} for the leadership team.
 
-Write a thorough, data-driven report using ALL of the data below. Do not make claims that are not supported by the data. If data is thin, say so honestly.
+Your task: synthesise the data below into a clear, narrative-driven brief focused on IMPACT, SENTIMENT and NARRATIVE. Be direct. Be opinionated. Reference specific outlets and headlines as evidence. Do not describe methodology or list raw numbers unless they tell a story.
 
 Use this exact structure:
 
-MEDIA & COVERAGE REPORT — ${company.name}
+MEDIA & INTELLIGENCE BRIEF — ${company.name}
 Prepared by Radical Ventures | ${new Date().toLocaleDateString("en-US", {month:"long", year:"numeric"})}
 ${dateRange}
 
-1. COVERAGE OVERVIEW
-   Total volume, tier breakdown, and types of outlets. Note the dominant coverage themes.
+─────────────────────────────────────────
 
-2. COVERAGE THEMES & KEY STORIES
-   For each theme that generated meaningful coverage, describe what drove it and name the most significant articles. Be specific — reference outlets and headlines.
+EXECUTIVE SUMMARY (2-3 sentences)
+A sharp top-line read: what is the dominant narrative right now, what is the overall sentiment, and what is the single most important thing leadership should know? Write this as if you are briefing a CEO.
 
-3. SENTIMENT ANALYSIS
-   Analyse the overall sentiment score. What drove positive coverage? What drove negative? Reference specific articles for both.
+─────────────────────────────────────────
 
-4. SOCIAL MEDIA PRESENCE
-   Platforms, volume, tone. Reference specific posts where relevant.
+1. NARRATIVE & IMPACT
+What story is the media telling about ${company.name} right now? Describe the dominant narrative arc — is it a launch, a controversy, a milestone, a competitive battle? Name the outlets and headlines that are shaping the narrative. What is the real-world impact of this coverage?
 
-5. COMPETITIVE CONTEXT
-   Compare coverage volume and sentiment to peers. Highlight ${company.name}'s relative position.
+2. SENTIMENT DEEP DIVE
+Go beyond the score. What specifically is driving positive sentiment — which outlets, which angles, which quotes or themes? What, if anything, is creating negative or cautionary coverage? If sentiment is neutral, explain what is keeping it there.
 
-6. COMMUNICATIONS RECOMMENDATIONS
-   Specific, actionable advice based on the coverage patterns above. Address any gaps or risks.
+3. TOP HEADLINES & SNIPPETS
+List the 8-10 most significant articles with a one-line editorial note on why each matters. Format:
+  • [Outlet, Date] "Headline" — why it matters
+
+4. SOCIAL & COMMUNITY PULSE
+What are people saying online? Focus on the most influential voices (highest follower counts, verified accounts). What themes are emerging in organic discussion? Is the tone aligned with or diverging from press sentiment?
+
+5. SIGNALS & WATCH ITEMS
+What patterns or signals in this data should leadership monitor closely? Are there emerging risks, missed opportunities, or narratives that need to be actively managed?
+
+6. RECOMMENDED ACTIONS
+Three to five specific, prioritised actions. Be concrete — name the outlet, the narrative, the timing.
+
+─────────────────────────────────────────
 
 ---
 DATA:
