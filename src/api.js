@@ -375,13 +375,8 @@ export async function fetchNews(company, fromDate, newsKey, outlets = []) {
     return true;
   });
 
-  // Build relevance keywords from the company name and query
-  const companyWords = company.name.toLowerCase().split(/\s+/).filter(w => w.length > 2);
-  const queryWords = simpleQuery.toLowerCase().replace(/['"]/g, "").split(/\s+/).filter(w => w.length > 3);
-  const relevanceWords = [...new Set([...companyWords, ...queryWords])];
-
+  // Date relevance filter — only Google News articles (NewsAPI handles its own date range)
   const isRelevant = (a) => {
-    // Only enforce date filter for Google News articles (NewsAPI handles its own date range)
     if (a.via === "google-news" && fromDate && a.date && a.date < fromDate) return false;
     return true;
   };
@@ -1157,13 +1152,20 @@ export async function generateBriefing(company, persona, apiKeys) {
     const t2 = mediaResults.filter(m => m.tier === 2);
     const t3 = mediaResults.filter(m => m.tier === 3);
 
-    // Top positive articles (most significant coverage)
-    const topPos = [...mediaResults].sort((a, b) => (b.sentiment || 0) - (a.sentiment || 0)).slice(0, 6)
-      .map(m => `  • [${m.date?.slice(0,10) || ""}] ${m.source} (T${m.tier}): ${m.title}${m.snippet ? " — " + m.snippet.slice(0, 120) : ""}`).join("\n");
+    // Top headlines — T1 outlets first, then by recency, max 12
+    const topHeadlines = [
+      ...t1.slice(0, 8),                                         // T1 outlets first
+      ...[...t2, ...t3].slice(0, 4),                             // fill remaining with T2/T3
+    ].slice(0, 12)
+      .map(m => `  • [${m.source}, ${m.date?.slice(0,10) || ""}] "${m.title}"${m.snippet ? " — " + m.snippet.slice(0, 120) : ""}`).join("\n");
+
+    // Top positive articles
+    const topPos = [...mediaResults].sort((a, b) => (b.sentiment || 0) - (a.sentiment || 0)).slice(0, 4)
+      .map(m => `  • [${m.date?.slice(0,10) || ""}] ${m.source} (T${m.tier}): ${m.title}`).join("\n");
 
     // Top negative articles
     const topNeg = [...mediaResults].sort((a, b) => (a.sentiment || 0) - (b.sentiment || 0)).slice(0, 4)
-      .map(m => `  • [${m.date?.slice(0,10) || ""}] ${m.source} (T${m.tier}): ${m.title}${m.snippet ? " — " + m.snippet.slice(0, 100) : ""}`).join("\n");
+      .map(m => `  • [${m.date?.slice(0,10) || ""}] ${m.source} (T${m.tier}): ${m.title}`).join("\n");
 
     // Notable Tier 1 coverage
     const t1Coverage = t1.slice(0, 15).map(m => `  • ${m.source}: ${m.title}`).join("\n") + (t1.length > 15 ? `\n  ... and ${t1.length - 15} more T1 articles` : "");
@@ -1215,8 +1217,11 @@ What story is the media telling about ${company.name} right now? Describe the do
 Go beyond the score. What specifically is driving positive sentiment — which outlets, which angles, which quotes or themes? What, if anything, is creating negative or cautionary coverage? If sentiment is neutral, explain what is keeping it there.
 
 3. TOP HEADLINES & SNIPPETS
-List the 8-10 most significant articles with a one-line editorial note on why each matters. Format:
+List the 8-10 most significant articles prioritising Tier 1 outlets, with a one-line editorial note on why each matters. Format:
   • [Outlet, Date] "Headline" — why it matters
+
+Use this pre-selected list as your starting point (already ranked T1 first):
+${topHeadlines}
 
 4. SOCIAL & COMMUNITY PULSE
 What are people saying online? Focus on the most influential voices (highest follower counts, verified accounts). What themes are emerging in organic discussion? Is the tone aligned with or diverging from press sentiment?
